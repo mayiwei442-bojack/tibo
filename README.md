@@ -19,7 +19,7 @@ Supabase Cron（每 2 小时）
   → getLatestTweets() → 独立 Python 容器 / Scrapling / Chromium
   → published_at 时间比较 → 仅分析新推文 → DeepSeek
   → Supabase tweets + monitor_state
-  → /api/dashboard → Next.js Dashboard（45 秒刷新）
+  → /api/dashboard → Next.js Dashboard（页面保持打开时每 100 分钟刷新；重新打开或切回标签页时立即读取）
 ```
 
 本项目使用 Supabase Cron + pg_net 定时触发，`vercel.json` 不包含 `crons`。`supabase/schedule.sql` 配置每 2 小时检查一次，安装数据库表不会自动启用调度。Vercel 使用 Fluid Compute，检查接口最长 300 秒；应用会提前结束超出预算的批次，留下未处理推文供下次重试。

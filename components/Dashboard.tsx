@@ -122,7 +122,7 @@ export function Dashboard({ initialData }: { initialData: DashboardData }) {
   useEffect(() => {
     const polling = setInterval(() => {
       if (document.visibilityState === 'visible') void refresh();
-    }, 45000);
+    }, 100 * 60 * 1000);
     const onVisible = () => {
       if (document.visibilityState === 'visible') void refresh();
     };
