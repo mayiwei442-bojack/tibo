@@ -1,6 +1,7 @@
 import 'server-only';
 import { createServerDatabase } from '@/lib/supabase/server';
 import { sourceUrl } from '@/lib/config';
+import { monitorHealth } from '@/lib/monitor/health';
 import type { DashboardData, MonitorHealth } from '@/types/dashboard';
 import type { StoredTweet } from '@/types/tweet';
 
@@ -61,13 +62,7 @@ export async function getDashboardData(): Promise<DashboardData> {
     if ([state, recent, latest, total, related].some((result) => result.error))
       throw new Error('DATABASE_READ_FAILED');
     const s = state.data!;
-    const health: MonitorHealth = s.last_error
-      ? 'degraded'
-      : !s.last_success_at
-        ? 'waiting'
-        : Date.now() - Date.parse(s.last_success_at) > 15 * 60000
-          ? 'stale'
-          : 'healthy';
+    const health = monitorHealth(s.last_error, s.last_success_at);
     return {
       state: {
         latest_tweet_time: s.latest_tweet_time,
