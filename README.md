@@ -14,7 +14,7 @@
 ## 适配 Vercel Hobby 的架构
 
 ```text
-Supabase Cron（每 5 分钟）
+Supabase Cron（每 2 小时）
   → GET /api/cron/check-tibo（Vercel Hobby / Node.js）
   → getLatestTweets() → 独立 Python 容器 / Scrapling / Chromium
   → published_at 时间比较 → 仅分析新推文 → DeepSeek
@@ -22,7 +22,7 @@ Supabase Cron（每 5 分钟）
   → /api/dashboard → Next.js Dashboard（45 秒刷新）
 ```
 
-Vercel Hobby 不支持每 5 分钟运行 Vercel Cron，因此 `vercel.json` 不包含 `crons`。`supabase/schedule.sql` 提供 Supabase Cron + pg_net 替代方案，安装数据库表不会自动启用调度。Vercel 使用 Fluid Compute，检查接口最长 300 秒；应用会提前结束超出预算的批次，留下未处理推文供下次重试。
+本项目使用 Supabase Cron + pg_net 定时触发，`vercel.json` 不包含 `crons`。`supabase/schedule.sql` 配置每 2 小时检查一次，安装数据库表不会自动启用调度。Vercel 使用 Fluid Compute，检查接口最长 300 秒；应用会提前结束超出预算的批次，留下未处理推文供下次重试。
 
 该方案不需要购买 Vercel Pro。容器宿主、DeepSeek 调用以及超出所用平台额度的资源另计。免费云资源不提供全天不中断保证；Supabase Free 存在闲置暂停规则，部署时应检查实际项目状态。
 
@@ -92,8 +92,8 @@ docker run --init --pids-limit 256 --memory 2g --cpus 1 -p 8000:8000 --env-file 
 3. 从 GitHub 仓库部署 Next.js 到 Vercel Hobby，配置环境变量并确认启用 Fluid Compute。
 4. 用 `CRON_SECRET` 调用 `/api/cron/check-tibo`，检查推文与进度实际入库。重复调用，确认已处理推文不会再次分析。
 5. 在 Supabase Dashboard 启用 Cron（pg_cron）、pg_net 和 Vault。在 Vault 添加 `tibo_monitor_url`（生产检查接口完整 URL）与 `tibo_cron_secret`（同一个 `CRON_SECRET`）。不要将密钥直接写在 SQL 文件里。
-6. 执行 `supabase/schedule.sql`。任务名为 `tibo-monitor-every-5-minutes`，表达式 `*/5 * * * *`。
-7. 查看至少两个相隔约 5 分钟的实际检查：`cron.job_run_details` 只证明调度执行，还需核对 `net._http_response` 的 HTTP 结果，以及 `monitor_state.last_success_at`。HTTP 202 表示部分工作延期，200 的 `busy` 表示已有任务在运行，都不等同于一次完整成功。
+6. 执行 `supabase/schedule.sql`。任务名为 `tibo-monitor-every-2-hours`，表达式 `0 */2 * * *`；再次运行会替换同名任务，并原子移除旧的 `tibo-monitor-every-5-minutes` 任务。
+7. 查看至少两个相隔约 2 小时的实际检查：`cron.job_run_details` 只证明调度执行，还需核对 `net._http_response` 的 HTTP 结果，以及 `monitor_state.last_success_at`。HTTP 202 表示部分工作延期，200 的 `busy` 表示已有任务在运行，都不等同于一次完整成功。
 
 这份仓库没有自动购买服务、创建数据库项目或启用定时任务的脚本。暂停调度可在 Supabase Cron 页面关闭此任务。
 

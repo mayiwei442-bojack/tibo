@@ -3,7 +3,9 @@
 -- Create these two secrets in Vault, never in this file or Git:
 --   tibo_monitor_url: full https://<production-domain>/api/cron/check-tibo
 --   tibo_cron_secret: the same value as Vercel's CRON_SECRET
--- This schedules ONE job. Re-running replaces the same named job.
+-- This schedules ONE job every two hours (UTC 00:00, 02:00, ...).
+-- Re-running replaces the same named job. The legacy five-minute job is removed
+-- in the same transaction, so a failed change leaves the old schedule intact.
 
 do $$
 begin
@@ -13,17 +15,28 @@ begin
 end;
 $$;
 
-select cron.schedule(
-  'tibo-monitor-every-5-minutes',
-  '*/5 * * * *',
-  $job$
-    select net.http_get(
-      url := (select decrypted_secret from vault.decrypted_secrets where name = 'tibo_monitor_url'),
-      headers := jsonb_build_object('Authorization', 'Bearer ' || (select decrypted_secret from vault.decrypted_secrets where name = 'tibo_cron_secret')),
-      timeout_milliseconds := 280000
-    );
-  $job$
-);
+do $$
+begin
+  perform cron.schedule(
+    'tibo-monitor-every-2-hours',
+    '0 */2 * * *',
+    $job$
+      select net.http_get(
+        url := (select decrypted_secret from vault.decrypted_secrets where name = 'tibo_monitor_url'),
+        headers := jsonb_build_object('Authorization', 'Bearer ' || (select decrypted_secret from vault.decrypted_secrets where name = 'tibo_cron_secret')),
+        timeout_milliseconds := 280000
+      );
+    $job$
+  );
+  if exists (select 1 from cron.job where jobname = 'tibo-monitor-every-5-minutes') then
+    perform cron.unschedule('tibo-monitor-every-5-minutes');
+  end if;
+end;
+$$;
+
+select jobid, jobname, schedule, active
+from cron.job
+where jobname in ('tibo-monitor-every-2-hours', 'tibo-monitor-every-5-minutes');
 
 -- Check BOTH cron.job_run_details (dispatch) and net._http_response (HTTP result).
 -- A successful dispatch alone does NOT prove the monitor succeeded.
