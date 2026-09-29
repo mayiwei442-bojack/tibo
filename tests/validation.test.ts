@@ -10,6 +10,8 @@ const analysis = {
   summary: 'Reset announced without a time.',
   reset_time: null,
   important: true,
+  reset_status: 'upcoming',
+  tweet_translation: '即将进行 Codex Reset。',
 };
 const tweet = {
   text: 'Codex resets soon.',
@@ -21,7 +23,7 @@ afterEach(() => {
   vi.unstubAllEnvs();
 });
 describe('strict contracts', () => {
-  it('accepts the five-field result with a null reset time', () =>
+  it('accepts Chinese summary and translation with a null reset time', () =>
     expect(analysisSchema.safeParse(analysis).success).toBe(true));
   it.each([
     { ...analysis, confidence: 0.8 },
@@ -29,6 +31,11 @@ describe('strict contracts', () => {
     { ...analysis, reset_time: 'soon' },
     { ...analysis, important: 'true' },
     { ...analysis, related_to_codex: false },
+    { ...analysis, reset_status: undefined },
+    { ...analysis, tweet_translation: '' },
+    { ...analysis, tweet_translation: undefined },
+    { ...analysis, reset_status: 'possible' },
+    { ...analysis, category: 'other' },
   ])('rejects invalid or extra analysis fields', (value) =>
     expect(analysisSchema.safeParse(value).success).toBe(false),
   );

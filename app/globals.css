@@ -7,8 +7,9 @@
   --muted: #83917b;
   --dim: #55624e;
   --amber: #e1b961;
-  --mono: 'IBM Plex Mono', monospace;
-  --display: 'Barlow Condensed', sans-serif;
+  --mono: 'IBM Plex Mono', 'PingFang SC', 'Microsoft YaHei', monospace;
+  --display: 'Barlow Condensed', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  --zh: 'PingFang SC', 'Microsoft YaHei', 'Noto Sans CJK SC', sans-serif;
   color-scheme: dark;
 }
 * {
@@ -20,7 +21,7 @@ html {
 body {
   margin: 0;
   color: var(--text);
-  font-family: var(--mono);
+  font-family: var(--mono), var(--zh);
   font-size: 13px;
   -webkit-font-smoothing: antialiased;
 }
@@ -144,6 +145,48 @@ h1 span {
   color: var(--muted);
   margin: 0;
 }
+html[lang='zh-CN'] h1 {
+  font-family: var(--display), var(--zh);
+  font-size: clamp(46px, 6.7vw, 92px);
+  line-height: 1.18;
+  letter-spacing: -0.5px;
+}
+html[lang='zh-CN'] .signal-title {
+  font-family: var(--display), var(--zh);
+  font-size: 34px;
+  line-height: 1.5;
+}
+html[lang='zh-CN'] .signal-title.detected-title { font-size: 28px; }
+html[lang='zh-CN'] .posts-heading h2 { font-family: var(--display), var(--zh); font-size: 29px; }
+html[lang='zh-CN'] .eyebrow { font-size: 11px; letter-spacing: 1px; }
+html[lang='zh-CN'] .led-title { font-family: var(--display), var(--zh); font-size: 34px; line-height: 1.3; letter-spacing: 0; }
+html[lang='zh-CN'] .led-topline, html[lang='zh-CN'] .led-evidence { font-size: 10px; }
+html[lang='zh-CN'] .tweet-summary p { font-size: 13px; line-height: 1.95; }
+html[lang='zh-CN'] .intro-copy, html[lang='zh-CN'] .signal-description { font-size: 12px; }
+.translate-button {
+  border: 1px solid #4b6335;
+  background: transparent;
+  color: var(--green);
+  font-size: 11px;
+  padding: 7px 11px;
+  margin: -4px 0 20px;
+}
+.translate-button:hover { background: #b0f44a10; border-color: var(--green); }
+.tweet-translation {
+  border-left: 2px solid #6e9250;
+  background: #b0f44a06;
+  padding: 14px 18px;
+  margin-bottom: 20px;
+}
+.tweet-translation p { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.95; margin: 8px 0 0; }
+.tweet-translation .eyebrow { color: var(--muted); }
+@media (max-width: 720px) {
+  html[lang='zh-CN'] .signal-title.detected-title { font-size: 23px; }
+  html[lang='zh-CN'] .led-title { font-size: 29px; }
+  html[lang='zh-CN'] .eyebrow { font-size: 10px; }
+  html[lang='zh-CN'] .panel-kicker { flex-wrap: wrap; }
+  html[lang='zh-CN'] .signal-description { font-size: 11px; }
+}
 .intro-index {
   display: flex;
   flex-direction: column;
@@ -185,7 +228,7 @@ h1 span {
 }
 .signal-panel {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 320px;
+  grid-template-columns: minmax(0, 1fr) minmax(340px, 0.8fr);
   border: 1px solid #3b4a30;
   background: linear-gradient(115deg, #11180e 0%, #0c100c 65%);
   position: relative;
@@ -264,6 +307,74 @@ h1 span {
 .signal-content > .source-link {
   margin-top: 20px;
 }
+.led-panel {
+  --led: #a9f24e;
+  min-width: 0;
+  padding: 17px;
+  border-left: 1px solid var(--line);
+  background: linear-gradient(145deg, #1a201a, #090c0a 55%);
+  display: flex;
+  flex-direction: column;
+}
+.led-upcoming { --led: #64e4ef; }
+.led-possible { --led: #ffc16a; }
+.led-unknown { --led: #9da99d; }
+.led-hardware {
+  display: flex;
+  justify-content: space-between;
+  color: #87927f;
+  font-size: 8px;
+  letter-spacing: 1.5px;
+  padding: 0 2px 13px;
+}
+.led-screen {
+  position: relative;
+  flex: 1;
+  padding: 20px 22px;
+  border: 1px solid color-mix(in srgb, var(--led) 27%, #18201a);
+  border-radius: 4px;
+  color: var(--led);
+  background: radial-gradient(circle, #ffffff0b 0.8px, transparent 1px) 0 0 / 5px 5px, #050907;
+  box-shadow: inset 0 0 35px #000, 0 0 18px color-mix(in srgb, var(--led) 5%, transparent);
+  overflow: hidden;
+}
+.led-screen::after {
+  content: '';
+  pointer-events: none;
+  position: absolute;
+  inset: 0;
+  background: repeating-linear-gradient(0deg, transparent 0 3px, #00000022 3px 4px);
+}
+.led-topline { display: flex; align-items: center; gap: 7px; font-size: 8px; letter-spacing: 0.8px; }
+.led-source { margin-left: auto; opacity: 0.65; }
+.led-indicator { width: 5px; height: 5px; background: var(--led); box-shadow: 0 0 8px var(--led); }
+.led-symbol { font: 300 58px/1 var(--mono); margin: 26px 0 16px; text-shadow: 0 0 22px color-mix(in srgb, var(--led) 40%, transparent); }
+.led-title {
+  margin: 0;
+  font: 600 clamp(32px, 3.4vw, 49px)/1 var(--display);
+  letter-spacing: 1.5px;
+  color: transparent;
+  background: radial-gradient(circle, var(--led) 1px, transparent 1.6px) 0 0 / 3px 3px;
+  background-clip: text;
+  filter: drop-shadow(0 0 4px color-mix(in srgb, var(--led) 35%, transparent));
+}
+.led-subtitle { font-size: 14px; letter-spacing: 3px; margin: 13px 0 18px; }
+.led-detail, .led-countdown p { font-size: 11px; line-height: 1.9; margin: 0; color: color-mix(in srgb, var(--led) 55%, #b7c4b7); }
+.led-detail { min-height: 44px; }
+.led-evidence { display: flex; flex-direction: column; gap: 9px; margin-top: 25px; padding-top: 13px; border-top: 1px solid color-mix(in srgb, var(--led) 22%, transparent); font-size: 8px; letter-spacing: 0.4px; }
+.led-evidence > span { color: #93a193; }
+.led-evidence a:hover { text-decoration: underline; }
+.led-legend { display: flex; justify-content: space-between; padding: 14px 3px 0; font-size: 9px; }
+.led-legend span { opacity: 0.45; }
+.led-legend span:nth-child(1) { color: #a9f24e; }
+.led-legend span:nth-child(2) { color: #64e4ef; }
+.led-legend span:nth-child(3) { color: #ffc16a; }
+.led-legend .active { opacity: 1; }
+.led-digits { display: grid; grid-template-columns: repeat(4, 1fr); gap: 7px; margin-bottom: 14px; }
+.led-digits > div { border: 1px solid #64e4ef25; background: #64e4ef06; padding: 8px 0; text-align: center; }
+.led-digits strong { display: block; font: 500 30px/1.1 var(--display); font-variant-numeric: tabular-nums; text-shadow: 0 0 10px #64e4ef40; }
+.led-digits small { display: block; font-size: 7px; margin-top: 6px; opacity: 0.65; }
+.led-countdown time { display: block; font-size: 9px; line-height: 1.8; margin-top: 6px; }
 .radar-panel {
   position: relative;
   display: flex;
@@ -707,7 +818,7 @@ footer svg {
     padding: 0 80px;
   }
   .signal-panel {
-    grid-template-columns: minmax(0, 1fr) 380px;
+    grid-template-columns: minmax(0, 1fr) minmax(400px, 0.8fr);
   }
 }
 @media (max-width: 1050px) {
@@ -715,7 +826,7 @@ footer svg {
     padding: 0 35px;
   }
   .signal-panel {
-    grid-template-columns: minmax(0, 1fr) 260px;
+    grid-template-columns: minmax(0, 1fr) 320px;
   }
   .radar {
     width: 190px;
@@ -796,6 +907,9 @@ footer svg {
   .radar-panel {
     display: none;
   }
+  .led-panel { border-left: 0; border-top: 1px solid var(--line); padding: 14px; }
+  .led-title { font-size: 42px; }
+  .led-symbol { margin-top: 20px; }
   .signal-content {
     padding: 24px 21px;
   }

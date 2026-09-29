@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { categories } from '@/types/analysis';
+import { categories, resetStatuses } from '@/types/analysis';
 
 export const analysisSchema = z
   .object({
@@ -8,9 +8,15 @@ export const analysisSchema = z
     summary: z.string().trim().min(1).max(1000),
     reset_time: z.iso.datetime({ offset: true }).nullable(),
     important: z.boolean(),
+    reset_status: z.enum(resetStatuses),
+    tweet_translation: z.string().trim().min(1).max(30000),
   })
   .strict()
   .superRefine((data, ctx) => {
+    if ((data.category !== 'reset' && data.reset_status !== 'none') ||
+        (data.category === 'reset' && data.reset_status === 'none') ||
+        (data.reset_status === 'possible' && (data.important || data.reset_time !== null)))
+      ctx.addIssue({ code: 'custom', message: 'Reset status contradicts analysis' });
     if (data.related_to_codex === (data.category === 'irrelevant'))
       ctx.addIssue({
         code: 'custom',

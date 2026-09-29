@@ -5,9 +5,9 @@ import '@fontsource/barlow-condensed/600.css';
 import './globals.css';
 
 export const metadata: Metadata = {
-  title: 'Codex Reset Monitor — Tibo signals',
+  title: 'Codex Reset 监控 — Tibo 消息',
   description:
-    "A focused monitor for Tibo's public posts about Codex usage, limits, and resets.",
+    "追踪 Tibo 关于 Codex usage、limits 与 Reset 的公开推文，保留英文原文，提供中文摘要与可选译文。",
 };
 export default function RootLayout({
   children,
@@ -15,7 +15,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en">
+    <html lang="zh-CN">
       <body>{children}</body>
     </html>
   );

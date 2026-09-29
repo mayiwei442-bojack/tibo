@@ -1,22 +1,25 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import Link from 'next/link';
 import { UtcClock } from './UtcClock';
+import { categoryLabels } from '@/lib/monitor/locale';
+import { ResetDisplay } from './ResetDisplay';
+import { CHECK_INTERVAL_HOURS, VIEW_REFRESH_MINUTES } from '@/lib/monitor/display';
 import type { DashboardData, MonitorHealth } from '@/types/dashboard';
 import type { StoredTweet } from '@/types/tweet';
 
 const healthLabels: Record<MonitorHealth, string> = {
-  unconfigured: 'AWAITING CONNECTION',
-  waiting: 'AWAITING FIRST CHECK',
-  healthy: 'MONITOR ONLINE',
-  degraded: 'CHECK INTERRUPTED',
-  stale: 'CHECK OVERDUE',
+  unconfigured: '等待连接',
+  waiting: '等待首次检查',
+  healthy: '监控运行中',
+  degraded: '检查中断',
+  stale: '检查已延迟',
 };
 function timestamp(value: string | null) {
   return value
     ? new Date(value).toISOString().replace('T', ' ').slice(0, 19)
-    : 'Not checked yet';
+    : '尚未检查';
 }
 function Icon({
   name,
@@ -70,6 +73,8 @@ function SourceLink({
   );
 }
 function TweetCard({ tweet }: { tweet: StoredTweet }) {
+  const [showTranslation, setShowTranslation] = useState(false);
+  const translationId = useId();
   return (
     <article className={`tweet-card ${tweet.important ? 'is-important' : ''}`}>
       <div className="tweet-meta">
@@ -77,16 +82,22 @@ function TweetCard({ tweet }: { tweet: StoredTweet }) {
           {timestamp(tweet.published_at)} UTC
         </time>
         <span className={`tag ${tweet.related_to_codex ? 'tag-green' : ''}`}>
-          {tweet.category.replaceAll('_', ' ')}
+          {categoryLabels[tweet.category]}
         </span>
-        {tweet.important && <span className="important-label">IMPORTANT</span>}
+        {tweet.important && <span className="important-label">重要更新</span>}
       </div>
-      <p className="tweet-text">{tweet.tweet_text}</p>
+      <p className="tweet-text" lang="en">{tweet.tweet_text}</p>
+      <button className="translate-button" aria-expanded={showTranslation} aria-controls={translationId} onClick={() => setShowTranslation(value => !value)}>
+        {showTranslation ? '收起译文' : '翻译成中文'}
+      </button>
+      <div id={translationId} hidden={!showTranslation} className="tweet-translation" lang="zh-CN">
+        {tweet.tweet_translation ? <><span className="eyebrow">AI 译文 · 以英文原文为准</span><p>{tweet.tweet_translation}</p></> : <p>这条推文暂未保存译文，英文原文仍可查看。</p>}
+      </div>
       <div className="tweet-summary">
-        <span className="eyebrow">AI SUMMARY</span>
+        <span className="eyebrow">AI 摘要</span>
         <p>{tweet.summary}</p>
       </div>
-      <SourceLink url={tweet.tweet_url}>Original post</SourceLink>
+      <SourceLink url={tweet.tweet_url}>查看原文</SourceLink>
     </article>
   );
 }
@@ -122,7 +133,7 @@ export function Dashboard({ initialData }: { initialData: DashboardData }) {
   useEffect(() => {
     const polling = setInterval(() => {
       if (document.visibilityState === 'visible') void refresh();
-    }, 100 * 60 * 1000);
+    }, VIEW_REFRESH_MINUTES * 60 * 1000);
     const onVisible = () => {
       if (document.visibilityState === 'visible') void refresh();
     };
@@ -137,9 +148,9 @@ export function Dashboard({ initialData }: { initialData: DashboardData }) {
   const signal = data.latestSignal;
   const status = signal
     ? signal.category === 'reset'
-      ? 'RESET INFORMATION DETECTED'
-      : 'CODEX UPDATE DETECTED'
-    : 'NORMAL';
+      ? '检测到 Reset 信息'
+      : '检测到 Codex 更新'
+    : '暂无相关更新';
   const health = refreshError ? 'degraded' : data.state.health;
   const shown = data.tweets.filter(
     (tweet) =>
@@ -150,16 +161,16 @@ export function Dashboard({ initialData }: { initialData: DashboardData }) {
   return (
     <div className="dashboard-shell">
       <header className="topbar">
-        <Link href="/" className="brand" aria-label="Codex Reset Monitor home">
+        <Link href="/" className="brand" aria-label="Codex Reset 监控首页">
           <span className="brand-icon">
             <Icon name="pulse" />
           </span>
           <span>
-            CODEX<span className="brand-secondary"> / RESET MONITOR</span>
+            CODEX<span className="brand-secondary"> / Reset 监控</span>
           </span>
         </Link>
         <div className="topbar-right">
-          <span className="desktop-only">SINGLE SOURCE. CLEAR SIGNAL.</span>
+          <span className="desktop-only">追踪原始消息，不猜测 Reset。</span>
           <UtcClock />
         </div>
       </header>
@@ -167,23 +178,23 @@ export function Dashboard({ initialData }: { initialData: DashboardData }) {
         <section className="intro">
           <div>
             <div className="eyebrow accent">
-              <span className="tiny-square" /> TIBO SIGNAL OBSERVATORY
+              <span className="tiny-square" /> Tibo 消息观测站
             </div>
             <h1>
-              STAY AHEAD
+              关注每一次
               <br />
-              OF THE <span>RESET.</span>
+              <span>Codex Reset.</span>
             </h1>
             <p className="intro-copy">
-              Codex limits change. Keep the source in sight.
+              跟进 Codex 额度变化，始终保留原始出处。
               <br />
-              Public posts. Relevant updates. Nothing guessed.
+              只记录公开消息与相关更新，不预测 Reset。
             </p>
           </div>
           <div className="intro-index" aria-hidden="true">
-            <span>MONITOR</span>
+            <span>监控</span>
             <b>01</b>
-            <span>CODEX / USAGE / RESET</span>
+            <span>Codex / Usage / Reset</span>
           </div>
         </section>
 
@@ -194,12 +205,12 @@ export function Dashboard({ initialData }: { initialData: DashboardData }) {
             />
             {healthLabels[health]}
           </span>
-          <span>ALL TIMES IN UTC</span>
+          <span>所有时间均为 UTC</span>
         </div>
-        <section className="signal-panel" aria-label="Latest relevant signal">
+        <section className="signal-panel" aria-label="最新相关消息">
           <div className="signal-content">
             <div className="panel-kicker">
-              <span className="eyebrow">LATEST RELEVANT SIGNAL</span>
+              <span className="eyebrow">最新相关消息</span>
               <span className={`status-pill ${signal ? 'detected' : ''}`}>
                 {status}
               </span>
@@ -210,115 +221,88 @@ export function Dashboard({ initialData }: { initialData: DashboardData }) {
                   {signal.summary}
                 </h2>
                 <p className="signal-description">
-                  Published {timestamp(signal.published_at)} UTC
-                  {signal.important ? ' · Important update' : ''}
+                  发布于 {timestamp(signal.published_at)} UTC
+                  {signal.important ? ' · 重要更新' : ''}
                 </p>
               </>
             ) : (
               <>
                 <h2 className="signal-title">
-                  Standing by for
+                  持续关注
                   <br />
-                  the next signal<span className="cursor">_</span>
+                  下一条消息<span className="cursor">_</span>
                 </h2>
                 <p className="signal-description">
                   {health === 'unconfigured'
-                    ? 'The monitor is awaiting its first connection. Verified updates will appear here.'
-                    : 'No Codex-related post has been recorded yet. New signals will appear after a successful check.'}
+                    ? '监控正在等待首次连接，确认后的消息会显示在这里。'
+                    : '尚未记录 Codex 相关推文，检查成功后会显示新消息。'}
                 </p>
               </>
             )}
             <div className="signal-details">
               <div>
-                <span className="eyebrow">CATEGORY</span>
+                <span className="eyebrow">分类</span>
                 <strong>
                   {signal
-                    ? signal.category.replaceAll('_', ' ').toUpperCase()
-                    : 'NO SIGNAL YET'}
+                    ? categoryLabels[signal.category]
+                    : '暂无消息'}
                 </strong>
               </div>
               <div>
-                <span className="eyebrow">RESET TIME</span>
+                <span className="eyebrow">Reset 时间</span>
                 <strong>
                   {signal?.reset_time
                     ? `${timestamp(signal.reset_time)} UTC`
-                    : 'Not explicitly stated'}
+                    : '原文未明确说明'}
                 </strong>
               </div>
             </div>
             {signal && (
-              <SourceLink url={signal.tweet_url}>View original post</SourceLink>
+              <SourceLink url={signal.tweet_url}>查看消息原文</SourceLink>
             )}
           </div>
-          <div className="radar-panel" aria-hidden="true">
-            <span className="radar-corner tl">+</span>
-            <span className="radar-corner tr">+</span>
-            <div
-              className={`radar ${health === 'healthy' ? 'radar-active' : ''}`}
-            >
-              <div className="radar-ring ring-one" />
-              <div className="radar-ring ring-two" />
-              <div className="radar-ring ring-three" />
-              <div className="radar-axis horizontal" />
-              <div className="radar-axis vertical" />
-              <div className="radar-sweep" />
-              <div className="radar-center">
-                <Icon name="pulse" />
-              </div>
-              <span className="radar-marker">N</span>
-            </div>
-            <div className="radar-caption">
-              <span>TIBO → CODEX</span>
-              <small>
-                {health === 'healthy'
-                  ? 'MONITOR CONNECTED'
-                  : 'AWAITING VERIFIED SIGNAL'}
-              </small>
-            </div>
-            <span className="radar-corner bl">+</span>
-            <span className="radar-corner br">+</span>
-          </div>
+          <ResetDisplay signal={data.latestResetSignal ?? null} stale={health !== 'healthy'} />
         </section>
 
-        <section className="metrics" aria-label="Monitor statistics">
+        <section className="metrics" aria-label="监控统计">
           <div className="metric">
-            <span className="eyebrow">LAST CHECKED</span>
+            <span className="eyebrow">最近检查</span>
             <strong className="time-value">
               {timestamp(data.state.last_check_at)}
             </strong>
             <small>
               {data.state.last_check_at
-                ? 'UTC · Last attempted check'
-                : 'Waiting for the first run'}
+                ? 'UTC · 最近一次检查尝试'
+                : '等待首次运行'}
             </small>
           </div>
           <div className="metric">
-            <span className="eyebrow">CHECK INTERVAL</span>
+            <span className="eyebrow">检查间隔</span>
             <strong>
-              05<span className="unit">MIN</span>
+              {String(CHECK_INTERVAL_HOURS).padStart(2, '0')}<span className="unit">小时</span>
             </strong>
-            <small>Scheduled interval</small>
+            <small>定时检查周期</small>
           </div>
           <div className="metric">
-            <span className="eyebrow">POSTS PROCESSED</span>
+            <span className="eyebrow">已处理推文</span>
             <strong>{String(data.totalProcessed).padStart(2, '0')}</strong>
-            <small>Successfully analysed & saved</small>
+            <small>已完成分析并保存</small>
           </div>
           <div className="metric">
-            <span className="eyebrow">RELEVANT SIGNALS</span>
+            <span className="eyebrow">相关消息</span>
             <strong className="accent">
               {String(data.relatedCount).padStart(2, '0')}
             </strong>
-            <small>Codex-related posts</small>
+            <small>Codex 相关推文</small>
           </div>
         </section>
 
         <section className="posts-section" aria-labelledby="recent-heading">
           <div className="posts-heading">
             <div>
-              <div className="eyebrow">THE SOURCE FEED</div>
+              <div className="eyebrow">原始消息流</div>
               <h2 id="recent-heading">
-                RECENT POSTS<span className="heading-period">.</span>
+                最近推文<span className="heading-period">.</span>
               </h2>
             </div>
             <button
@@ -327,14 +311,14 @@ export function Dashboard({ initialData }: { initialData: DashboardData }) {
               disabled={refreshing}
             >
               <Icon name="refresh" className={refreshing ? 'spinning' : ''} />
-              {refreshing ? 'Refreshing' : 'Refresh view'}
+              {refreshing ? '正在刷新' : '刷新页面'}
             </button>
           </div>
           <div className="posts-toolbar">
             <div
               className="filters"
               role="group"
-              aria-label="Filter recent posts"
+              aria-label="筛选最近推文"
             >
               {(['all', 'related', 'important'] as const).map((value) => (
                 <button
@@ -344,28 +328,27 @@ export function Dashboard({ initialData }: { initialData: DashboardData }) {
                   onClick={() => setFilter(value)}
                 >
                   {value === 'all'
-                    ? 'All posts'
+                    ? '全部推文'
                     : value === 'related'
-                      ? 'Codex related'
-                      : 'Important'}
+                      ? 'Codex 相关'
+                      : '重要更新'}
                   {value === 'all' && <span>{data.tweets.length}</span>}
                 </button>
               ))}
             </div>
-            <span className="feed-note">LATEST 30 / NEWEST FIRST</span>
+            <span className="feed-note">最近 30 条 / 按发布时间倒序</span>
           </div>
           {refreshError && (
             <p className="notice" role="status">
-              The latest data could not be retrieved. Showing the last available
-              view; refresh will retry automatically.
+              暂时无法获取最新数据，当前显示上次加载的内容，稍后将自动重试。
             </p>
           )}
           {(health === 'degraded' || health === 'stale') && !refreshError && (
             <p className="notice" role="status">
               {health === 'stale'
-                ? 'The next successful check is overdue.'
-                : 'The last check could not finish.'}{' '}
-              Existing signals remain visible. Last successful check:{' '}
+                ? '定时检查已延迟。'
+                : '上次检查未能完成。'}{' '}
+              已有消息仍可查看。最近一次成功检查：{' '}
               {timestamp(data.state.last_success_at)}.
             </p>
           )}
@@ -379,18 +362,18 @@ export function Dashboard({ initialData }: { initialData: DashboardData }) {
                 </div>
                 <h3>
                   {data.tweets.length
-                    ? 'No posts in this filter'
-                    : 'The feed starts with the first check.'}
+                    ? '当前筛选下没有推文'
+                    : '首次检查后，这里将显示推文。'}
                 </h3>
                 <p>
                   {data.tweets.length
-                    ? 'Try another filter to explore the recent posts.'
-                    : 'Once a post is processed, its original text, summary and source will appear here.'}
+                    ? '试试其他筛选条件，查看最近的推文。'
+                    : '推文处理完成后，将在这里显示英文原文、中文摘要和出处。'}
                 </p>
                 <span className="eyebrow">
                   {data.tweets.length
-                    ? 'ADJUST FILTER TO CONTINUE'
-                    : 'NO PROCESSED POSTS YET'}
+                    ? '切换筛选条件继续查看'
+                    : '暂无已处理推文'}
                 </span>
               </div>
             )}
@@ -400,30 +383,30 @@ export function Dashboard({ initialData }: { initialData: DashboardData }) {
           <div className="source-profile">
             <span className="avatar">T</span>
             <div>
-              <span className="eyebrow">MONITORED SOURCE</span>
+              <span className="eyebrow">监控来源</span>
               <strong>
                 Tibo <span>/ X</span>
               </strong>
             </div>
           </div>
           <p>
-            One source. Original context.
+            单一来源，保留原始语境。
             <br />
-            <span>Every signal links back to the post.</span>
+            <span>每条消息都可追溯至原始推文。</span>
           </p>
           {data.sourceUrl ? (
-            <SourceLink url={data.sourceUrl}>View profile</SourceLink>
+            <SourceLink url={data.sourceUrl}>查看 X 主页</SourceLink>
           ) : (
-            <span className="source-pending">PROFILE PENDING CONNECTION</span>
+            <span className="source-pending">等待连接来源账号</span>
           )}
         </section>
       </main>
       <footer>
         <span>
-          <Icon name="cross" /> CODEX RESET MONITOR
+          <Icon name="cross" /> Codex Reset 监控
         </span>
-        <span>VIEW AUTO-REFRESHES EVERY 45S</span>
-        <span className="footer-note">Information, not prediction.</span>
+        <span>页面每 {VIEW_REFRESH_MINUTES} 分钟自动刷新</span>
+        <span className="footer-note">记录消息，不做预测。</span>
       </footer>
     </div>
   );

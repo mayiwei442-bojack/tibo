@@ -16,6 +16,7 @@ export function emptyDashboard(
       health,
     },
     latestSignal: null,
+    latestResetSignal: null,
     tweets: [],
     totalProcessed: 0,
     relatedCount: 0,
@@ -33,18 +34,28 @@ export async function getDashboardData(): Promise<DashboardData> {
     const db = createServerDatabase();
     const columns =
       'id,tweet_url,tweet_text,published_at,scraped_at,related_to_codex,category,summary,reset_time,important,created_at';
-    const [state, recent, latest, total, related] = await Promise.all([
+    async function readRecent() {
+      const query = (fields: string) => db.from('tweets').select(fields)
+        .order('published_at', { ascending: false }).order('id', { ascending: false }).limit(30);
+      const result = await query(`${columns},tweet_translation`);
+      return result.error?.code === '42703' ? query(columns) : result;
+    }
+    async function readReset() {
+      const query = (fields: string) => db.from('tweets').select(fields)
+        .eq('related_to_codex', true).eq('category', 'reset')
+        .order('published_at', { ascending: false }).order('id', { ascending: false })
+        .limit(1).maybeSingle();
+      const result = await query(`${columns},reset_status`);
+      // Rolling upgrades: legacy rows/schema remain readable, never guessed.
+      return result.error?.code === '42703' ? query(columns) : result;
+    }
+    const [state, recent, latest, total, related, reset] = await Promise.all([
       db
         .from('monitor_state')
         .select('latest_tweet_time,last_check_at,last_success_at,last_error')
         .eq('id', 1)
         .single(),
-      db
-        .from('tweets')
-        .select(columns)
-        .order('published_at', { ascending: false })
-        .order('id', { ascending: false })
-        .limit(30),
+      readRecent(),
       db
         .from('tweets')
         .select(columns)
@@ -58,8 +69,9 @@ export async function getDashboardData(): Promise<DashboardData> {
         .from('tweets')
         .select('id', { count: 'exact', head: true })
         .eq('related_to_codex', true),
+      readReset(),
     ]);
-    if ([state, recent, latest, total, related].some((result) => result.error))
+    if ([state, recent, latest, total, related, reset].some((result) => result.error))
       throw new Error('DATABASE_READ_FAILED');
     const s = state.data!;
     const health = monitorHealth(s.last_error, s.last_success_at);
@@ -70,8 +82,9 @@ export async function getDashboardData(): Promise<DashboardData> {
         last_success_at: s.last_success_at,
         health,
       },
-      tweets: (recent.data ?? []) as StoredTweet[],
+      tweets: (recent.data ?? []) as unknown as StoredTweet[],
       latestSignal: latest.data as StoredTweet | null,
+      latestResetSignal: reset.data as unknown as StoredTweet | null,
       totalProcessed: total.count ?? 0,
       relatedCount: related.count ?? 0,
       sourceUrl: sourceUrl(),

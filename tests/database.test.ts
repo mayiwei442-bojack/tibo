@@ -33,6 +33,8 @@ beforeAll(async () => {
   await db.exec(
     readFileSync('supabase/migrations/20260920142258_monitor_v1.sql', 'utf8'),
   );
+  await db.exec(readFileSync('supabase/migrations/20260927092842_reset_status.sql', 'utf8'));
+  await db.exec(readFileSync('supabase/migrations/20260927094104_chinese_content.sql', 'utf8'));
 });
 afterAll(async () => {
   await db.close();
@@ -44,6 +46,34 @@ beforeEach(async () => {
 });
 
 describe('actual Postgres migration and RPCs', () => {
+  it('backfills only exact historical records and can run twice without changing originals', async () => {
+    const original = 'Resets all propagated. That will be all. Have a fantastic weekend.';
+    const oldSummary = 'Tibo states that all resets have been propagated and wishes everyone a fantastic weekend.';
+    await acquire();
+    await db.query('select public.monitor_save_tweet($1, $2::jsonb)', [token, JSON.stringify({ ...tweet, tweet_url: 'https://x.com/thsottiaux/status/2103911959544610829', tweet_text: original, summary: oldSummary })]);
+    const sql = readFileSync('supabase/migrations/20260927094104_chinese_content.sql', 'utf8');
+    await db.exec(sql);
+    await db.exec(sql);
+    const saved = (await db.query<{tweet_text: string; summary: string; tweet_translation: string}>('select tweet_text,summary,tweet_translation from tweets')).rows[0];
+    expect(saved.tweet_text).toBe(original);
+    expect(saved.summary).toBe('Tibo 表示所有 Reset 都已生效，并祝大家周末愉快。');
+    expect(saved.tweet_translation).toContain('所有 Reset 都已生效');
+    expect((await db.query<{latest_tweet_time: unknown}>('select latest_tweet_time from monitor_state')).rows[0].latest_tweet_time).toBeNull();
+  });
+  it('stores the Chinese translation separately and leaves the original untouched', async () => {
+    await acquire();
+    await db.query('select public.monitor_save_tweet($1, $2::jsonb)', [token, JSON.stringify({ ...tweet, summary: '宣布 Codex Reset。', tweet_translation: '这是一条 Reset 公告。', reset_status: 'upcoming' })]);
+    const saved = (await db.query<{tweet_text: string; summary: string; tweet_translation: string}>('select tweet_text,summary,tweet_translation from tweets')).rows[0];
+    expect(saved).toEqual({tweet_text: tweet.tweet_text, summary: '宣布 Codex Reset。', tweet_translation: '这是一条 Reset 公告。'});
+  });
+  it('stores reset lifecycle and preserves legacy writes as unknown', async () => {
+    await acquire();
+    await save();
+    expect((await db.query<{reset_status: string}>('select reset_status from tweets')).rows[0].reset_status).toBe('unknown');
+    await db.query('select public.monitor_save_tweet($1, $2::jsonb)', [token, JSON.stringify({ ...tweet, tweet_url: 'https://x.com/test/status/456', reset_status: 'completed' })]);
+    expect((await db.query<{reset_status: string}>("select reset_status from tweets where tweet_url like '%456'")).rows[0].reset_status).toBe('completed');
+    await expect(db.query('select public.monitor_save_tweet($1, $2::jsonb)', [token, JSON.stringify({ ...tweet, tweet_url: 'https://x.com/test/status/789', reset_status: 'invented' })])).rejects.toThrow();
+  });
   it('grants only the service role access', async () => {
     await db.exec('set role anon');
     await expect(db.query('select * from public.tweets')).rejects.toThrow(

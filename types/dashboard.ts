@@ -10,6 +10,7 @@ export interface DashboardData {
     health: MonitorHealth;
   };
   latestSignal: StoredTweet | null;
+  latestResetSignal?: StoredTweet | null;
   tweets: StoredTweet[];
   totalProcessed: number;
   relatedCount: number;

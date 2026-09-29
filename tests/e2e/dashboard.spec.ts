@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test';
+test.use({ baseURL: 'http://localhost:3102' });
 
 test('honest initial state and no unauthorized Cron', async ({
   page,
@@ -7,26 +8,27 @@ test('honest initial state and no unauthorized Cron', async ({
   const errors: string[] = [];
   page.on('pageerror', (error) => errors.push(error.message));
   await page.goto('/');
+  await expect(page.locator('.clock')).not.toContainText('—');
   await expect(page.getByRole('heading', { level: 1 })).toHaveText(
-    'STAY AHEADOF THE RESET.',
+    '关注每一次Codex Reset.',
   );
   await expect(
-    page.getByText('AWAITING CONNECTION', { exact: true }),
+    page.getByText('等待连接', { exact: true }),
   ).toBeVisible();
   await expect(
-    page.getByText('Not explicitly stated', { exact: true }),
+    page.getByText('原文未明确说明', { exact: true }),
   ).toBeVisible();
   await expect(
-    page.getByText('The feed starts with the first check.'),
+    page.getByText('首次检查后，这里将显示推文。'),
   ).toBeVisible();
   expect((await request.get('/api/cron/check-tibo')).status()).toBe(401);
-  await page.getByRole('button', { name: 'Codex related' }).click();
+  await page.getByRole('button', { name: 'Codex 相关' }).click();
   await expect(
-    page.getByRole('button', { name: 'Codex related' }),
+    page.getByRole('button', { name: 'Codex 相关' }),
   ).toHaveAttribute('aria-pressed', 'true');
-  await page.getByRole('button', { name: 'Refresh view' }).click();
+  await page.getByRole('button', { name: '刷新页面' }).click();
   await expect(
-    page.getByRole('button', { name: 'Refresh view' }),
+    page.getByRole('button', { name: '刷新页面' }),
   ).toBeEnabled();
   expect(
     await page.evaluate(
@@ -89,26 +91,26 @@ test('saved signals, filters, safe links and refresh failure', async ({
     }),
   );
   await page.goto('/');
-  await page.getByRole('button', { name: 'Refresh view' }).click();
+  await page.getByRole('button', { name: '刷新页面' }).click();
   await expect(
-    page.getByText('RESET INFORMATION DETECTED', { exact: true }),
+    page.getByText('检测到 Reset 信息', { exact: true }),
   ).toBeVisible();
   await expect(page.locator('.tweet-card')).toHaveCount(2);
-  await page.getByRole('button', { name: 'Important', exact: true }).click();
+  await page.getByRole('button', { name: '重要更新', exact: true }).click();
   await expect(page.locator('.tweet-card')).toHaveCount(1);
   await expect(
-    page.getByRole('link', { name: 'View original post' }),
+    page.getByRole('link', { name: '查看消息原文' }),
   ).toHaveAttribute('href', signal.tweet_url);
   await expect(
-    page.getByText('Not explicitly stated', { exact: true }),
+    page.getByText('原文未明确说明', { exact: true }),
   ).toBeVisible();
   fail = true;
-  await page.getByRole('button', { name: 'Refresh view' }).click();
+  await page.getByRole('button', { name: '刷新页面' }).click();
   await expect(page.getByRole('status')).toContainText(
-    'Showing the last available view',
+    '当前显示上次加载的内容',
   );
   await expect(
-    page.getByText('RESET INFORMATION DETECTED', { exact: true }),
+    page.getByText('检测到 Reset 信息', { exact: true }),
   ).toBeVisible();
   expect(
     await page.evaluate(
