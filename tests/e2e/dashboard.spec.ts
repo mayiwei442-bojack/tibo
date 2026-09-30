@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test';
+import { expect, test } from './fixtures';
 test.use({ baseURL: 'http://localhost:3102' });
 
 test('honest initial state and no unauthorized Cron', async ({
@@ -26,9 +26,9 @@ test('honest initial state and no unauthorized Cron', async ({
   await expect(
     page.getByRole('button', { name: 'Codex 相关' }),
   ).toHaveAttribute('aria-pressed', 'true');
-  await page.getByRole('button', { name: '刷新页面' }).click();
+  await page.getByRole('button', { name: '检查并刷新' }).click();
   await expect(
-    page.getByRole('button', { name: '刷新页面' }),
+    page.getByRole('button', { name: '检查并刷新' }),
   ).toBeEnabled();
   expect(
     await page.evaluate(
@@ -91,7 +91,7 @@ test('saved signals, filters, safe links and refresh failure', async ({
     }),
   );
   await page.goto('/');
-  await page.getByRole('button', { name: '刷新页面' }).click();
+  await page.getByRole('button', { name: '检查并刷新' }).click();
   await expect(
     page.getByText('检测到 Reset 信息', { exact: true }),
   ).toBeVisible();
@@ -105,8 +105,8 @@ test('saved signals, filters, safe links and refresh failure', async ({
     page.getByText('原文未明确说明', { exact: true }),
   ).toBeVisible();
   fail = true;
-  await page.getByRole('button', { name: '刷新页面' }).click();
-  await expect(page.getByRole('status')).toContainText(
+  await page.getByRole('button', { name: '检查并刷新' }).click();
+  await expect(page.getByText(/当前显示上次加载的内容/)).toContainText(
     '当前显示上次加载的内容',
   );
   await expect(

@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test';
+import { expect, test } from './fixtures';
 test.use({ baseURL: 'http://localhost:3102' });
 
 for (const mode of ['completed', 'upcoming', 'possible', 'unknown'] as const) {
@@ -22,12 +22,12 @@ for (const mode of ['completed', 'upcoming', 'possible', 'unknown'] as const) {
   await expect(page.locator('.clock')).not.toContainText('—');
     await expect(page.locator('.clock')).not.toContainText('—');
     await page.clock.install({ time: new Date('2026-10-01T00:00:00Z') });
-    await page.getByRole('button', { name: '刷新页面' }).click();
+    await page.getByRole('button', { name: '检查并刷新' }).click();
     const panel = page.getByRole('complementary', { name: 'Reset 状态显示屏' });
     await expect(panel).toHaveAttribute('data-mode', mode);
     await expect(panel).toBeVisible();
-    await expect(page.locator('.metric').nth(1)).toContainText('02小时');
-    await expect(page.locator('footer')).toContainText('100 分钟');
+    await expect(page.locator('.metric').nth(1)).toContainText('90分钟');
+    await expect(page.locator('footer')).toContainText(/新推文入库后自动更新|自动更新连接中|打开或切回页面时读取最新数据/);
     if (mode === 'upcoming') {
       await page.clock.runFor(2000);
       await expect(panel.getByRole('timer')).not.toContainText('--');
@@ -36,7 +36,7 @@ for (const mode of ['completed', 'upcoming', 'possible', 'unknown'] as const) {
       await expect(panel).toContainText('等待重置完成确认');
       await expect(panel).toHaveAttribute('data-mode', 'upcoming');
       signal.reset_time = null;
-      await page.getByRole('button', { name: '刷新页面' }).click();
+      await page.getByRole('button', { name: '检查并刷新' }).click();
       await expect(panel.getByRole('timer')).toHaveCount(0);
       await expect(panel).toContainText('具体时间尚未说明');
     } else {

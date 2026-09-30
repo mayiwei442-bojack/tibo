@@ -2,10 +2,11 @@
 
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import Link from 'next/link';
+import { createClient } from '@supabase/supabase-js';
 import { UtcClock } from './UtcClock';
 import { categoryLabels } from '@/lib/monitor/locale';
 import { ResetDisplay } from './ResetDisplay';
-import { CHECK_INTERVAL_HOURS, VIEW_REFRESH_MINUTES } from '@/lib/monitor/display';
+import { CHECK_INTERVAL_MINUTES, hasNewTweetVersion } from '@/lib/monitor/display';
 import type { DashboardData, MonitorHealth } from '@/types/dashboard';
 import type { StoredTweet } from '@/types/tweet';
 
@@ -16,6 +17,9 @@ const healthLabels: Record<MonitorHealth, string> = {
   degraded: '检查中断',
   stale: '检查已延迟',
 };
+const realtimeUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+const realtimeKey = process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
+const realtimeConfigured = Boolean(realtimeUrl && realtimeKey);
 function timestamp(value: string | null) {
   return value
     ? new Date(value).toISOString().replace('T', ' ').slice(0, 19)
@@ -107,9 +111,15 @@ export function Dashboard({ initialData }: { initialData: DashboardData }) {
   const [filter, setFilter] = useState<'all' | 'related' | 'important'>('all');
   const [refreshing, setRefreshing] = useState(false);
   const [refreshError, setRefreshError] = useState(false);
+  const [checking, setChecking] = useState(false);
+  const [checkNotice, setCheckNotice] = useState<string | null>(null);
+  const [realtimeConnected, setRealtimeConnected] = useState(false);
   const request = useRef<AbortController | null>(null);
-  const refresh = useCallback(async () => {
-    if (request.current) return;
+  const manualRequest = useRef<AbortController | null>(null);
+  const latestWatermark = useRef(initialData.state.latest_tweet_time);
+  const refresh = useCallback(async (replace = false) => {
+    if (request.current && !replace) return;
+    request.current?.abort();
     const controller = new AbortController();
     request.current = controller;
     setRefreshing(true);
@@ -120,27 +130,101 @@ export function Dashboard({ initialData }: { initialData: DashboardData }) {
         signal: controller.signal,
       });
       if (!response.ok) throw new Error('Unavailable');
-      setData((await response.json()) as DashboardData);
+      const nextData = (await response.json()) as DashboardData;
+      if (request.current !== controller) return;
+      latestWatermark.current = nextData.state.latest_tweet_time;
+      setData(nextData);
       setRefreshError(false);
     } catch {
-      setRefreshError(true);
+      if (request.current === controller) setRefreshError(true);
     } finally {
       clearTimeout(timeout);
-      request.current = null;
-      setRefreshing(false);
+      if (request.current === controller) {
+        request.current = null;
+        setRefreshing(false);
+      }
     }
   }, []);
+
+  const checkAndRefresh = useCallback(async () => {
+    if (manualRequest.current) return;
+    const controller = new AbortController();
+    manualRequest.current = controller;
+    setChecking(true);
+    setCheckNotice('正在检查 X，发现新推文后会分析并更新页面，请稍候。');
+    const timeout = setTimeout(() => controller.abort(), 300000);
+    try {
+      const response = await fetch('/api/monitor/check', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: '{}',
+        signal: controller.signal,
+      });
+      const result = await response.json();
+      if (response.status === 429) {
+        const seconds = Number(response.headers.get('Retry-After')) || 300;
+        setCheckNotice(`刚刚已检查过，请约 ${Math.ceil(seconds / 60)} 分钟后重试。本次不重复抓取。`);
+      } else if (response.status === 409) {
+        setCheckNotice('已有检查正在进行，本次未重复启动。请稍后查看结果。');
+      } else if (response.ok && result.status === 'deferred') {
+        setCheckNotice(`已处理 ${result.processed} 条新推文，剩余内容将在后续检查继续处理。`);
+      } else if (response.ok && result.status === 'complete') {
+        setCheckNotice(result.processed > 0
+          ? `检查完成，已处理 ${result.processed} 条新推文。`
+          : '检查完成，没有发现新推文。');
+      } else {
+        setCheckNotice('本次检查未完成，已有记录仍可查看，请稍后重试。');
+      }
+      // Even a no-new-post check updates the time/status displayed to its caller.
+      await refresh(true);
+    } catch {
+      setCheckNotice('未能确认检查结果，后台可能仍在运行，请稍后重新打开页面查看。');
+    } finally {
+      clearTimeout(timeout);
+      manualRequest.current = null;
+      setChecking(false);
+    }
+  }, [refresh]);
   useEffect(() => {
-    const polling = setInterval(() => {
-      if (document.visibilityState === 'visible') void refresh();
-    }, VIEW_REFRESH_MINUTES * 60 * 1000);
     const onVisible = () => {
       if (document.visibilityState === 'visible') void refresh();
     };
     document.addEventListener('visibilitychange', onVisible);
+    if (!realtimeUrl || !realtimeKey) {
+      return () => {
+        request.current?.abort();
+        manualRequest.current?.abort();
+        document.removeEventListener('visibilitychange', onVisible);
+      };
+    }
+
+    const db = createClient(realtimeUrl, realtimeKey, {
+      auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
+    });
+    let active = true;
+    const onUpdate = (value: unknown) => {
+      if (!hasNewTweetVersion(value, latestWatermark.current)) return;
+      if (document.visibilityState === 'visible') void refresh();
+    };
+    const channel = db.channel('dashboard-update-signal')
+      .on('postgres_changes', {
+        event: 'UPDATE', schema: 'public', table: 'dashboard_updates', filter: 'id=eq.1',
+      }, (payload) => onUpdate(payload.new.latest_tweet_time))
+      .subscribe((status) => {
+        if (!active) return;
+        setRealtimeConnected(status === 'SUBSCRIBED');
+        if (status !== 'SUBSCRIBED') return;
+        // Reconcile the short gap between the server render and subscription.
+        void db.from('dashboard_updates').select('latest_tweet_time').eq('id', 1).single()
+          .then(({ data }) => {
+            if (active) onUpdate(data?.latest_tweet_time);
+          });
+      });
     return () => {
-      clearInterval(polling);
+      active = false;
+      void db.removeChannel(channel);
       request.current?.abort();
+      manualRequest.current?.abort();
       document.removeEventListener('visibilitychange', onVisible);
     };
   }, [refresh]);
@@ -272,14 +356,14 @@ export function Dashboard({ initialData }: { initialData: DashboardData }) {
             </strong>
             <small>
               {data.state.last_check_at
-                ? 'UTC · 最近一次检查尝试'
+                ? 'UTC · 本页最近同步的检查'
                 : '等待首次运行'}
             </small>
           </div>
           <div className="metric">
             <span className="eyebrow">检查间隔</span>
             <strong>
-              {String(CHECK_INTERVAL_HOURS).padStart(2, '0')}<span className="unit">小时</span>
+              {CHECK_INTERVAL_MINUTES}<span className="unit">分钟</span>
             </strong>
             <small>定时检查周期</small>
           </div>
@@ -307,11 +391,12 @@ export function Dashboard({ initialData }: { initialData: DashboardData }) {
             </div>
             <button
               className="refresh-button"
-              onClick={() => void refresh()}
-              disabled={refreshing}
+              onClick={() => void checkAndRefresh()}
+              disabled={checking || refreshing}
+              title="检查 X 的最新推文并更新页面；全站共享 5 分钟冷却时间"
             >
-              <Icon name="refresh" className={refreshing ? 'spinning' : ''} />
-              {refreshing ? '正在刷新' : '刷新页面'}
+              <Icon name="refresh" className={checking || refreshing ? 'spinning' : ''} />
+              {checking ? '正在检查 X' : refreshing ? '正在更新页面' : '检查并刷新'}
             </button>
           </div>
           <div className="posts-toolbar">
@@ -338,9 +423,10 @@ export function Dashboard({ initialData }: { initialData: DashboardData }) {
             </div>
             <span className="feed-note">最近 30 条 / 按发布时间倒序</span>
           </div>
+          {checkNotice && <p className="notice" role="status">{checkNotice}</p>}
           {refreshError && (
             <p className="notice" role="status">
-              暂时无法获取最新数据，当前显示上次加载的内容，稍后将自动重试。
+              暂时无法获取最新数据，当前显示上次加载的内容，请稍后重新打开页面。
             </p>
           )}
           {(health === 'degraded' || health === 'stale') && !refreshError && (
@@ -405,7 +491,11 @@ export function Dashboard({ initialData }: { initialData: DashboardData }) {
         <span>
           <Icon name="cross" /> Codex Reset 监控
         </span>
-        <span>页面每 {VIEW_REFRESH_MINUTES} 分钟自动刷新</span>
+        <span>{realtimeConnected
+          ? '新推文入库后自动更新'
+          : realtimeConfigured
+            ? '自动更新连接中 · 可手动刷新'
+            : '打开或切回页面时读取最新数据'}</span>
         <span className="footer-note">记录消息，不做预测。</span>
       </footer>
     </div>

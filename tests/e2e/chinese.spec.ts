@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test';
+import { expect, test } from './fixtures';
 
 test.use({ baseURL: 'http://localhost:3102' });
 
@@ -24,7 +24,7 @@ test('Chinese interface keeps English posts and toggles translation without requ
   } }));
   await page.goto('/');
   await expect(page.locator('.clock')).not.toContainText('—');
-  await page.getByRole('button', { name: '刷新页面' }).click();
+  await page.getByRole('button', { name: '检查并刷新' }).click();
   await expect(page.locator('html')).toHaveAttribute('lang', 'zh-CN');
   await expect(page.locator('.signal-title')).toHaveText(tweet.summary);
   const card = page.locator('.tweet-card').first();

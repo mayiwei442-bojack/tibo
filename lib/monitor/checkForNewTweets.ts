@@ -2,8 +2,14 @@ import type { Analysis } from '@/types/analysis';
 import type { Tweet } from '@/types/tweet';
 import { MonitorError, safeErrorCode } from '@/lib/errors';
 
+export interface MonitorAcquisition {
+  acquired: boolean;
+  latest_tweet_time: string | null;
+  reason?: 'busy' | 'rate_limited';
+  retry_after_seconds?: number;
+}
 export interface MonitorRepository {
-  acquire(): Promise<{ acquired: boolean; latest_tweet_time: string | null }>;
+  acquire(): Promise<MonitorAcquisition>;
   exists(tweet: Tweet): Promise<boolean>;
   save(tweet: Tweet, analysis: Analysis): Promise<void>;
   advance(time: string, urls: string[]): Promise<void>;
@@ -25,6 +31,10 @@ export async function checkForNewTweets({
   const deadline = now() + 220000;
   console.info('[Monitor] Start');
   const state = await repository.acquire();
+  if (!state.acquired && state.reason === 'rate_limited') {
+    return { status: 'rate_limited', processed: 0,
+      retryAfterSeconds: state.retry_after_seconds ?? 300 } as const;
+  }
   if (!state.acquired) return { status: 'busy', processed: 0 } as const;
   let processed = 0;
   try {

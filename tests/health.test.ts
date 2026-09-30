@@ -4,12 +4,12 @@ import { monitorHealth } from '@/lib/monitor/health';
 const checkedAt = '2026-09-27T08:00:00Z';
 const checkedAtMs = Date.parse(checkedAt);
 
-describe('monitor health for the two-hour schedule', () => {
+describe('monitor health for the 90-minute schedule', () => {
   it('stays healthy until the next check has had 30 minutes of grace', () => {
-    expect(monitorHealth(null, checkedAt, checkedAtMs + 149 * 60_000)).toBe(
+    expect(monitorHealth(null, checkedAt, checkedAtMs + 119 * 60_000)).toBe(
       'healthy',
     );
-    expect(monitorHealth(null, checkedAt, checkedAtMs + 151 * 60_000)).toBe(
+    expect(monitorHealth(null, checkedAt, checkedAtMs + 121 * 60_000)).toBe(
       'stale',
     );
   });

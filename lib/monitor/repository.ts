@@ -2,9 +2,9 @@ import 'server-only';
 import { randomUUID } from 'node:crypto';
 import { createServerDatabase } from '@/lib/supabase/server';
 import { MonitorError } from '@/lib/errors';
-import type { MonitorRepository } from './checkForNewTweets';
+import type { MonitorAcquisition, MonitorRepository } from './checkForNewTweets';
 
-export function createMonitorRepository(): MonitorRepository {
+export function createMonitorRepository({ manual = false }: { manual?: boolean } = {}): MonitorRepository {
   const db = createServerDatabase();
   const token = randomUUID();
   async function rpc(name: string, params: Record<string, unknown>) {
@@ -14,10 +14,10 @@ export function createMonitorRepository(): MonitorRepository {
   }
   return {
     async acquire() {
-      const result = await rpc('monitor_acquire', {});
+      const result = await rpc(manual ? 'monitor_acquire_manual' : 'monitor_acquire', {});
       if (!result || typeof result.acquired !== 'boolean')
         throw new MonitorError('DATABASE_INVALID_STATE');
-      return result as { acquired: boolean; latest_tweet_time: string | null };
+      return { latest_tweet_time: null, ...result } as MonitorAcquisition;
     },
     async exists(tweet) {
       const { data, error } = await db

@@ -35,17 +35,39 @@ beforeAll(async () => {
   );
   await db.exec(readFileSync('supabase/migrations/20260927092842_reset_status.sql', 'utf8'));
   await db.exec(readFileSync('supabase/migrations/20260927094104_chinese_content.sql', 'utf8'));
+  await db.exec(readFileSync('supabase/migrations/20260929170036_dashboard_updates_realtime.sql', 'utf8'));
+  await db.exec(readFileSync('supabase/migrations/20260929172245_manual_monitor_cooldown.sql', 'utf8'));
 });
 afterAll(async () => {
   await db.close();
 });
 beforeEach(async () => {
   await db.exec(
-    'reset role; truncate public.tweets; update public.monitor_state set latest_tweet_time=null,last_check_at=null,last_success_at=null,last_error=null,lease_token=null,lease_until=null;',
+    'reset role; truncate public.tweets; update public.monitor_state set latest_tweet_time=null,last_check_at=null,last_success_at=null,last_error=null,lease_token=null,lease_until=null; update public.dashboard_updates set latest_tweet_time=null;',
   );
 });
 
 describe('actual Postgres migration and RPCs', () => {
+  it('shares the manual lock and cooldown across visitors and cron, including failed checks', async () => {
+    const manual = (value = token) => db.query<{ result: { acquired: boolean; reason?: string; retry_after_seconds?: number } }>(
+      'select public.monitor_acquire_manual($1) as result', [value]);
+    await db.exec('set role service_role');
+    expect((await manual()).rows[0].result.acquired).toBe(true);
+    expect((await manual(other)).rows[0].result.reason).toBe('busy');
+    expect((await acquire(other)).rows[0].result.acquired).toBe(false);
+    await db.query("select public.monitor_finish($1,'SCRAPER_UNAVAILABLE')", [token]);
+    const blocked = (await manual(other)).rows[0].result;
+    expect(blocked.reason).toBe('rate_limited');
+    expect(blocked.retry_after_seconds).toBeGreaterThan(0);
+    expect(blocked.retry_after_seconds).toBeLessThanOrEqual(300);
+    expect((await acquire(other)).rows[0].result.acquired).toBe(true);
+    await db.query('select public.monitor_finish($1,null)', [other]);
+    expect((await manual()).rows[0].result.reason).toBe('rate_limited');
+    await db.exec("update public.monitor_state set last_check_at=now()-interval '6 minutes'");
+    expect((await manual()).rows[0].result.acquired).toBe(true);
+    await db.exec('reset role; set role anon');
+    await expect(manual()).rejects.toThrow(/permission denied/);
+  });
   it('backfills only exact historical records and can run twice without changing originals', async () => {
     const original = 'Resets all propagated. That will be all. Have a fantastic weekend.';
     const oldSummary = 'Tibo states that all resets have been propagated and wishes everyone a fantastic weekend.';
@@ -76,6 +98,8 @@ describe('actual Postgres migration and RPCs', () => {
   });
   it('grants only the service role access', async () => {
     await db.exec('set role anon');
+    expect((await db.query('select latest_tweet_time from public.dashboard_updates')).rows).toHaveLength(1);
+    await expect(db.query('update public.dashboard_updates set latest_tweet_time=now()')).rejects.toThrow(/permission denied/);
     await expect(db.query('select * from public.tweets')).rejects.toThrow(
       /permission denied/,
     );
@@ -121,6 +145,24 @@ describe('actual Postgres migration and RPCs', () => {
     expect(success.rows[0].latest_tweet_time).not.toBeNull();
     expect(success.rows[0].last_success_at).not.toBeNull();
     expect(success.rows[0].lease_token).toBeNull();
+    const version = await db.query<{ latest_tweet_time: unknown }>('select latest_tweet_time from public.dashboard_updates');
+    expect(version.rows[0].latest_tweet_time).not.toBeNull();
+  });
+  it('publishes a version only after successful completion with a new cursor', async () => {
+    await acquire();
+    await db.query('select public.monitor_finish($1,null)', [token]);
+    expect((await db.query<{ latest_tweet_time: unknown }>('select latest_tweet_time from dashboard_updates')).rows[0].latest_tweet_time).toBeNull();
+
+    await acquire();
+    await save();
+    await db.query('select public.monitor_advance($1,$2,$3::text[])', [token, tweet.published_at, [tweet.tweet_url]]);
+    expect((await db.query<{ latest_tweet_time: unknown }>('select latest_tweet_time from dashboard_updates')).rows[0].latest_tweet_time).toBeNull();
+    await db.query("select public.monitor_finish($1,'ANALYSIS_UNAVAILABLE')", [token]);
+    expect((await db.query<{ latest_tweet_time: unknown }>('select latest_tweet_time from dashboard_updates')).rows[0].latest_tweet_time).toBeNull();
+
+    await acquire();
+    await db.query('select public.monitor_finish($1,null)', [token]);
+    expect((await db.query<{ latest_tweet_time: unknown }>('select latest_tweet_time from dashboard_updates')).rows[0].latest_tweet_time).not.toBeNull();
   });
   it('does not duplicate a saved URL', async () => {
     await acquire();

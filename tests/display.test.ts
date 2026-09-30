@@ -1,5 +1,14 @@
 import { describe, expect, it } from 'vitest';
-import { countdownParts } from '@/lib/monitor/display';
+import { countdownParts, hasNewTweetVersion } from '@/lib/monitor/display';
+
+describe('Realtime dashboard version', () => {
+  it('refreshes only for a newer tweet, not an equivalent timestamp spelling', () => {
+    expect(hasNewTweetVersion('2026-09-30T09:00:00Z', '2026-09-30T17:00:00+08:00')).toBe(false);
+    expect(hasNewTweetVersion('2026-09-30T09:01:00Z', '2026-09-30T09:00:00.000+00:00')).toBe(true);
+    expect(hasNewTweetVersion(null, null)).toBe(false);
+    expect(hasNewTweetVersion('invalid', null)).toBe(false);
+  });
+});
 
 describe('announced reset countdown', () => {
   const target = '2026-10-01T00:00:00Z';

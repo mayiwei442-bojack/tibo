@@ -1,5 +1,12 @@
-export const CHECK_INTERVAL_HOURS = 2;
-export const VIEW_REFRESH_MINUTES = 100;
+export const CHECK_INTERVAL_MINUTES = 90;
+
+/** Compare instants, not JSON timestamp formatting or timezone spelling. */
+export function hasNewTweetVersion(incoming: unknown, current: string | null) {
+  if (typeof incoming !== 'string') return false;
+  const incomingTime = Date.parse(incoming);
+  if (!Number.isFinite(incomingTime)) return false;
+  return current === null || incomingTime > Date.parse(current);
+}
 
 /** Elapsed targets are not evidence that the promised reset happened. */
 export function countdownParts(target: string | null, now: number | null) {

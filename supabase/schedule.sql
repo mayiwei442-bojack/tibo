@@ -3,9 +3,10 @@
 -- Create these two secrets in Vault, never in this file or Git:
 --   tibo_monitor_url: full https://<production-domain>/api/cron/check-tibo
 --   tibo_cron_secret: the same value as Vercel's CRON_SECRET
--- This schedules ONE job every two hours (UTC 00:00, 02:00, ...).
--- Re-running replaces the same named job. The legacy five-minute job is removed
--- in the same transaction, so a failed change leaves the old schedule intact.
+-- Every 90 minutes requires two cron expressions: UTC 00:00, 01:30, 03:00, ...
+-- Re-running replaces the same two named jobs and removes legacy schedules.
+
+begin;
 
 do $$
 begin
@@ -18,8 +19,8 @@ $$;
 do $$
 begin
   perform cron.schedule(
-    'tibo-monitor-every-2-hours',
-    '0 */2 * * *',
+    'tibo-monitor-90m-hour',
+    '0 */3 * * *',
     $job$
       select net.http_get(
         url := (select decrypted_secret from vault.decrypted_secrets where name = 'tibo_monitor_url'),
@@ -28,6 +29,20 @@ begin
       );
     $job$
   );
+  perform cron.schedule(
+    'tibo-monitor-90m-half-hour',
+    '30 1-23/3 * * *',
+    $job$
+      select net.http_get(
+        url := (select decrypted_secret from vault.decrypted_secrets where name = 'tibo_monitor_url'),
+        headers := jsonb_build_object('Authorization', 'Bearer ' || (select decrypted_secret from vault.decrypted_secrets where name = 'tibo_cron_secret')),
+        timeout_milliseconds := 280000
+      );
+    $job$
+  );
+  if exists (select 1 from cron.job where jobname = 'tibo-monitor-every-2-hours') then
+    perform cron.unschedule('tibo-monitor-every-2-hours');
+  end if;
   if exists (select 1 from cron.job where jobname = 'tibo-monitor-every-5-minutes') then
     perform cron.unschedule('tibo-monitor-every-5-minutes');
   end if;
@@ -36,7 +51,10 @@ $$;
 
 select jobid, jobname, schedule, active
 from cron.job
-where jobname in ('tibo-monitor-every-2-hours', 'tibo-monitor-every-5-minutes');
+where jobname in ('tibo-monitor-90m-hour', 'tibo-monitor-90m-half-hour',
+  'tibo-monitor-every-2-hours', 'tibo-monitor-every-5-minutes');
+
+commit;
 
 -- Check BOTH cron.job_run_details (dispatch) and net._http_response (HTTP result).
 -- A successful dispatch alone does NOT prove the monitor succeeded.

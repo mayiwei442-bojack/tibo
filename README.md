@@ -1,28 +1,31 @@
 # Codex Reset Monitor
 
-监控单个 Tibo X 账号，按发布时间识别新推文，交给 DeepSeek 分析并保存到 Supabase。黑绿 Dashboard 每 45 秒读取数据库，展示最新相关信号和最近 30 条处理记录。
+监控单个 Tibo X 账号，按发布时间识别新推文，交给 DeepSeek 分析并保存到 Supabase。Dashboard 首次打开时读取数据库；已打开页面在新推文成功入库后收到 Realtime 更新信号，再读取最新相关信息和最近 30 条处理记录。
 
 ## 当前实现与验收边界
 
 - 已实现 Next.js 页面、受保护检查接口、Python/Scrapling 抓取服务、DeepSeek 严格 JSON 校验、两张数据库表与并发保护。
 - 本地无凭据时显示等待连接，不使用虚构推文、重置时间或监控成功状态。
 - 自动化测试使用明确的测试夹具和本地 PGlite PostgreSQL；不等同于真实 Supabase/DeepSeek/X 联调。
-- 用户已创建 Supabase 项目并报告已填写本地环境变量；只读连接可达，但 `tweets` 和 `monitor_state` 尚不存在。Python v3 容器已部署到 Google Cloud Run，真实请求返回 HTTP 200 和 5 条推文。DeepSeek、数据库写入、Vercel 页面与云端定时任务尚未联调或启用。
-- 监控账号已确认：`https://x.com/thsottiaux`。2026-09-26 本地 Scrapling 实际抓取成功返回 5 条推文的正文、发布时间和 URL；云端网络环境仍待验收，不能承诺 X 公开时间线持续可读。
+- 监控账号已确认：`https://x.com/thsottiaux`。X 的匿名公开时间线可能随时改变或不可读，不能把一次成功抓取当作长期可用保证。
+- 仓库内的 SQL 与环境变量模板不会自动修改线上 Supabase、Vercel 或 Cloud Run；应按下文步骤分别部署并验收。
 - 当前公开详情页仅显示到分钟。浏览器明确使用 UTC 时区和 en-US 语言后提取页面时间，秒记为 00，不通过推文 ID 推算时间；未结束的当前分钟暂缓处理，同一分钟成组保存后推进游标。
 
 ## 适配 Vercel Hobby 的架构
 
 ```text
-Supabase Cron（每 2 小时）
+Supabase Cron（每 90 分钟；UTC 整点、半点交替）
   → GET /api/cron/check-tibo（Vercel Hobby / Node.js）
   → getLatestTweets() → 独立 Python 容器 / Scrapling / Chromium
   → published_at 时间比较 → 仅分析新推文 → DeepSeek
   → Supabase tweets + monitor_state
-  → /api/dashboard → Next.js Dashboard（页面保持打开时每 100 分钟刷新；重新打开或切回标签页时立即读取）
+  → dashboard_updates 版本信号（仅成功处理新推文后变化）
+  → 已打开页面收到 Supabase Realtime 事件 → /api/dashboard → Next.js Dashboard
 ```
 
-本项目使用 Supabase Cron + pg_net 定时触发，`vercel.json` 不包含 `crons`。`supabase/schedule.sql` 配置每 2 小时检查一次，安装数据库表不会自动启用调度。Vercel 使用 Fluid Compute，检查接口最长 300 秒；应用会提前结束超出预算的批次，留下未处理推文供下次重试。
+本项目使用 Supabase Cron + pg_net 定时触发，`vercel.json` 不包含 `crons`。`supabase/schedule.sql` 用两个任务实现每 90 分钟检查一次：UTC 00:00、01:30、03:00、04:30……（北京时间 08:00、09:30、11:00、12:30……）。标准 Cron 不能让每次 90 分钟检查都恰好落在整点。安装数据库表不会自动启用调度。Vercel 使用 Fluid Compute，检查接口最长 300 秒；应用会提前结束超出预算的批次，留下未处理推文供下次重试。
+
+定时检查无新推文时不调用 DeepSeek、不写 `tweets`、不触发 Dashboard 全量读取；仍会更新 `monitor_state` 的检查时间。因此，持续打开且没有新推文的页面，其“最近检查”显示的是本页上次同步时看到的时间。新访客打开网页时，Next.js 服务器读取数据库并生成页面；已打开页面在收到新推文入库的 Realtime 信号或切回标签页时请求 `/api/dashboard`。主动点击“检查并刷新”则会先运行完整检查流程，结束后读取数据库，无新推文也会同步最新检查时间。公开客户端只能读取单行版本信号，不能直接读取 `tweets`、`monitor_state` 或服务端密钥。
 
 该方案不需要购买 Vercel Pro。容器宿主、DeepSeek 调用以及超出所用平台额度的资源另计。免费云资源不提供全天不中断保证；Supabase Free 存在闲置暂停规则，部署时应检查实际项目状态。
 
@@ -40,6 +43,7 @@ npm run dev -- --port 3102
 | 环境变量                    | 用途                                                         |
 | --------------------------- | ------------------------------------------------------------ |
 | `NEXT_PUBLIC_SUPABASE_URL`  | 当前项目的 Supabase URL                                      |
+| `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` | 浏览器 Realtime 公钥（`sb_publishable_...`），仅用于订阅更新信号 |
 | `SUPABASE_SECRET_KEY`       | 优先使用的新式服务端密钥，仅在服务器使用                     |
 | `SUPABASE_SERVICE_ROLE_KEY` | 兼容旧式服务端密钥，与上一项选填一个即可                     |
 | `DEEPSEEK_API_KEY`          | DeepSeek 凭据                                                |
@@ -49,7 +53,7 @@ npm run dev -- --port 3102
 | `SCRAPER_URL`               | Python 容器 HTTPS 根地址；开发时可用 `http://127.0.0.1:8000` |
 | `SCRAPER_SECRET`            | 独立随机 Bearer 密钥，与 Python 容器一致，至少 32 个字符     |
 
-页面通过服务端读取公开展示字段，不需要浏览器 Supabase anon key；数据库表和 RPC 对 `anon` / `authenticated` 均不可访问。
+推文与监控状态由服务端读取，浏览器只用 publishable key 订阅 `dashboard_updates` 的时间版本。`tweets`、`monitor_state` 和监控 RPC 对 `anon` / `authenticated` 仍不可访问。若未设置浏览器公钥，页面仍能打开并支持手动/切回刷新，但不会收到自动更新事件。绝不能把 Secret Key 或 service_role key 放进 `NEXT_PUBLIC_` 变量。
 
 Python 本地启动（仓库根目录）：
 
@@ -92,12 +96,21 @@ docker run --init --pids-limit 256 --memory 2g --cpus 1 -p 8000:8000 --env-file 
 3. 从 GitHub 仓库部署 Next.js 到 Vercel Hobby，配置环境变量并确认启用 Fluid Compute。
 4. 用 `CRON_SECRET` 调用 `/api/cron/check-tibo`，检查推文与进度实际入库。重复调用，确认已处理推文不会再次分析。
 5. 在 Supabase Dashboard 启用 Cron（pg_cron）、pg_net 和 Vault。在 Vault 添加 `tibo_monitor_url`（生产检查接口完整 URL）与 `tibo_cron_secret`（同一个 `CRON_SECRET`）。不要将密钥直接写在 SQL 文件里。
-6. 执行 `supabase/schedule.sql`。任务名为 `tibo-monitor-every-2-hours`，表达式 `0 */2 * * *`；再次运行会替换同名任务，并原子移除旧的 `tibo-monitor-every-5-minutes` 任务。
-7. 查看至少两个相隔约 2 小时的实际检查：`cron.job_run_details` 只证明调度执行，还需核对 `net._http_response` 的 HTTP 结果，以及 `monitor_state.last_success_at`。HTTP 202 表示部分工作延期，200 的 `busy` 表示已有任务在运行，都不等同于一次完整成功。
+6. 在 SQL Editor 执行 `supabase/migrations/20260929170036_dashboard_updates_realtime.sql`，确认 `public.dashboard_updates` 在 `supabase_realtime` publication 中；在 Vercel Production 设置 `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` 并重新部署。先完成数据库迁移，再启用客户端订阅。
+7. 执行 `supabase/schedule.sql`。它创建 `tibo-monitor-90m-hour` 与 `tibo-monitor-90m-half-hour` 两个任务，并原子移除旧的两小时／五分钟任务。**只修改仓库文件不会自动改动线上任务，必须在实际项目 SQL Editor 执行。**
+8. 查看至少两个相隔约 90 分钟的实际检查：`cron.job_run_details` 只证明调度执行，还需核对 `net._http_response` 的 HTTP 结果，以及 `monitor_state.last_success_at`。HTTP 202 表示部分工作延期，200 的 `busy` 表示已有任务在运行，都不等同于一次完整成功。开两个浏览器标签页，在下一条新推文完成分析入库后确认两页自动更新；无新推文时页面不请求 `/api/dashboard`。
 
 这份仓库没有自动购买服务、创建数据库项目或启用定时任务的脚本。暂停调度可在 Supabase Cron 页面关闭此任务。
 
 ## 数据一致性
+
+### 手动检查并刷新
+
+页面“检查并刷新”按钮发送同源 `POST /api/monitor/check`，执行与 Cron 相同的 Cloud Run 抓取、发布时间比较、DeepSeek 分析和数据库保存流程，然后读取 `/api/dashboard`。没有新推文时跳过 AI，但仍更新检查时间并向点击者同步当前数据库结果。页面显示正在检查、没有新推文、处理条数、已有检查运行、冷却中或失败提示。
+
+部署前在 SQL Editor 执行 `supabase/migrations/20260929172245_manual_monitor_cooldown.sql`，再部署代码。新增 RPC 仅允许 service_role 调用；浏览器没有 CRON_SECRET，也不能直接运行数据库 RPC。手动请求与定时请求共用数据库租约，所有访客共享从上次检查开始计时的 5 分钟冷却，包括失败检查；正常的 90 分钟 Cron 仍按原计划执行。冷却在数据库中原子校验，因此跨浏览器、跨 Vercel 实例也有效。按钮属于公开功能，同源校验防止跨站网页触发，不代表访客身份认证；机器人仍可在冷却后调用，最坏可把抓取频率提高到约每 5 分钟一次。
+
+Realtime 通知和切回页面只读取数据库，绝不会再次触发 Cloud Run，避免“入库 → 刷新 → 再抓取”的循环。未安装手动检查迁移时接口返回失败，不会绕过冷却直接启动抓取。
 
 ### 中文界面与可选推文译文
 
@@ -113,7 +126,7 @@ docker run --init --pids-limit 256 --memory 2g --cpus 1 -p 8000:8000 --env-file 
 
 新推文分析增加第六个字段：`completed`（绿色，明确已重置）、`upcoming`（青色，明确将重置）、`possible`（琥珀色，措辞不确定）；另外 `unknown` / `none` 用于信息不足及无关讨论。LED 独立读取最新 reset 类推文，不会被后续普通 Codex 推文替代。无数据或未迁移时显示待确认，而非已重置。
 
-仅 `upcoming` 且原文明示完整时间时显示本地倒计时；归零后显示等待完成确认，不会自动变成已重置。检查周期显示 02 HOURS，数据库轮询与页脚均为 100 分钟；倒计时不访问后端。
+仅 `upcoming` 且原文明示完整时间时显示本地倒计时；归零后显示等待完成确认，不会自动变成已重置。检查周期显示 90 分钟；页面不再定时轮询数据库，倒计时也不访问后端。
 
 - `published_at > latest_tweet_time` 是唯一的新旧判断规则，比较真实时间值而非字符串，旧 → 新处理。
 - 每条分析成功后持久化；一组相同发布时间的推文全部保存后，才推进游标。中途失败立即停止，较新的内容不会越过失败点。
