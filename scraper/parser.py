@@ -133,7 +133,7 @@ def parse_detail(html: str, url: str) -> dict:
     raise ScrapeError('INCOMPLETE_POST')
 
 
-def finalize_posts(posts: list[dict], since: str | None) -> list[dict]:
+def finalize_posts(posts: list[dict], since: str | None, *, allow_incomplete: bool = False) -> list[dict]:
     unique = {}
     for post in posts:
         previous = unique.get(post["url"])
@@ -146,7 +146,7 @@ def finalize_posts(posts: list[dict], since: str | None) -> list[dict]:
     # Anonymous X sometimes serves popularity-sorted historical posts. Fail closed.
     if not chronological or chronological != sorted(chronological, reverse=True):
         raise ScrapeError("TIMELINE_NOT_CHRONOLOGICAL")
-    if since and min(chronological) > parse_time(since):
+    if since and min(chronological) > parse_time(since) and not allow_incomplete:
         raise ScrapeError("TIMELINE_COVERAGE_INCOMPLETE")
     # Bootstrap only from a currently visible recent timeline, never a stale profile.
     if not since and (datetime.now(timezone.utc) - max(chronological)).days > 7:

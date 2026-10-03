@@ -4,7 +4,7 @@
 
 ## 当前实现与验收边界
 
-- 已实现 Next.js 页面、受保护检查接口、Python/Scrapling 抓取服务、DeepSeek 严格 JSON 校验、两张数据库表与并发保护。
+- 已实现 Next.js 页面、受保护检查接口、Python/Scrapling 抓取服务、DeepSeek 严格 JSON 校验、推文／监控状态／页面更新信号三张数据库表与并发保护。
 - 本地无凭据时显示等待连接，不使用虚构推文、重置时间或监控成功状态。
 - 自动化测试使用明确的测试夹具和本地 PGlite PostgreSQL；不等同于真实 Supabase/DeepSeek/X 联调。
 - 监控账号已确认：`https://x.com/thsottiaux`。X 的匿名公开时间线可能随时改变或不可读，不能把一次成功抓取当作长期可用保证。
@@ -19,7 +19,7 @@ Supabase Cron（每 90 分钟；UTC 整点、半点交替）
   → getLatestTweets() → 独立 Python 容器 / Scrapling / Chromium
   → published_at 时间比较 → 仅分析新推文 → DeepSeek
   → Supabase tweets + monitor_state
-  → dashboard_updates 版本信号（仅成功处理新推文后变化）
+  → dashboard_updates 递增版本信号（新推文入库或覆盖缺口变化时变化）
   → 已打开页面收到 Supabase Realtime 事件 → /api/dashboard → Next.js Dashboard
 ```
 
@@ -53,7 +53,7 @@ npm run dev -- --port 3102
 | `SCRAPER_URL`               | Python 容器 HTTPS 根地址；开发时可用 `http://127.0.0.1:8000` |
 | `SCRAPER_SECRET`            | 独立随机 Bearer 密钥，与 Python 容器一致，至少 32 个字符     |
 
-推文与监控状态由服务端读取，浏览器只用 publishable key 订阅 `dashboard_updates` 的时间版本。`tweets`、`monitor_state` 和监控 RPC 对 `anon` / `authenticated` 仍不可访问。若未设置浏览器公钥，页面仍能打开并支持手动/切回刷新，但不会收到自动更新事件。绝不能把 Secret Key 或 service_role key 放进 `NEXT_PUBLIC_` 变量。
+推文与监控状态由服务端读取，浏览器只用 publishable key 订阅 `dashboard_updates` 的递增版本。`tweets`、`monitor_state` 和监控 RPC 对 `anon` / `authenticated` 仍不可访问。若未设置浏览器公钥，页面仍能打开并支持手动/切回刷新，但不会收到自动更新事件。绝不能把 Secret Key 或 service_role key 放进 `NEXT_PUBLIC_` 变量。
 
 Python 本地启动（仓库根目录）：
 
@@ -76,16 +76,16 @@ docker build -t tibo-scraper ./scraper
 docker run --init --pids-limit 256 --memory 2g --cpus 1 -p 8000:8000 --env-file scraper/.env tibo-scraper
 ```
 
-`scraper/.env` 由 `.env.example` 复制，只配置 `TIBO_X_URL` 和 `SCRAPER_SECRET`。部署平台暴露端口 8000，并配置 HTTPS。`GET /health` 只代表服务进程在线，不能证明 X 抓取成功。`POST /tweets` 使用 `Authorization: Bearer <SCRAPER_SECRET>`，请求体为 `{"latestTweetTime":null}` 或已处理时间，返回 `sourceUrl` 和 `tweets`。
+`scraper/.env` 由 `.env.example` 复制，只配置 `TIBO_X_URL` 和 `SCRAPER_SECRET`。部署平台暴露端口 8000，并配置 HTTPS。`GET /health` 只代表服务进程在线，不能证明 X 抓取成功。`POST /tweets` 使用 `Authorization: Bearer <SCRAPER_SECRET>`，请求体为 `{"latestTweetTime":null}` 或已处理时间，返回 `sourceUrl`、`tweets`、`coverageComplete` 和 `oldestOrdinaryPublishedAt`。
 
 容器不含 Supabase 或 DeepSeek 密钥。服务只访问预配置目标，拒绝请求自行指定 URL。每次浏览器运行有硬超时，单进程同时只允许一次抓取。标准部署使用一个 Uvicorn worker。
 
 ### 抓取边界
 
 - 使用 Scrapling `DynamicFetcher` 获取公开页面，按时间线有界滚动，提取目标作者的正文、时间和规范化原始链接。
-- 不使用登录 Cookie、代理轮换或自动解验证码。登录墙、挑战页面、缺少正文、折叠长文和不完整时间线均视为抓取失败。
+- 不使用登录 Cookie、代理轮换或自动解验证码。登录墙、挑战页面、缺少正文和折叠长文仍视为抓取失败；可解析但历史覆盖不足的时间线会明确标为部分结果。
 - 检查非置顶帖是否按新到旧顺序返回。置顶帖不作为已经覆盖上次处理时间的证据。
-- 首次仅处理当前可见的近期样本，不回填全部历史。后续必须向下抓到 `latest_tweet_time`，否则拒绝推进游标；长时间停机造成的积压可能需要人工处理。
+- 首次仅处理当前可见的近期样本，不回填全部历史。后续若抓不到 `latest_tweet_time`，仍保存当前可见且尚未分析的新推文，但记录未核实区间、保持游标原位；后续重新抓到完整覆盖时才推进游标并清除告警。长时间停机造成的历史积压仍可能需要人工核实。
 - 公开页面只能证明观察到的内容；删除、隐藏、X 未返回的推文无法恢复。仅依赖发布时间，也无法发现之后才出现且时间不大于游标的内容，这是原始 V1 时间模型的限制。
 - 不会把空抓取、历史热门帖或访问失败报告为“没有新推文”。如果目标匿名时间线不可读，需先解决受允许的数据访问方式，不能用样例数据冒充生产抓取成功。
 
@@ -96,7 +96,7 @@ docker run --init --pids-limit 256 --memory 2g --cpus 1 -p 8000:8000 --env-file 
 3. 从 GitHub 仓库部署 Next.js 到 Vercel Hobby，配置环境变量并确认启用 Fluid Compute。
 4. 用 `CRON_SECRET` 调用 `/api/cron/check-tibo`，检查推文与进度实际入库。重复调用，确认已处理推文不会再次分析。
 5. 在 Supabase Dashboard 启用 Cron（pg_cron）、pg_net 和 Vault。在 Vault 添加 `tibo_monitor_url`（生产检查接口完整 URL）与 `tibo_cron_secret`（同一个 `CRON_SECRET`）。不要将密钥直接写在 SQL 文件里。
-6. 在 SQL Editor 执行 `supabase/migrations/20260929170036_dashboard_updates_realtime.sql`，确认 `public.dashboard_updates` 在 `supabase_realtime` publication 中；在 Vercel Production 设置 `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` 并重新部署。先完成数据库迁移，再启用客户端订阅。
+6. 在 SQL Editor 执行 `supabase/migrations/20260929170036_dashboard_updates_realtime.sql`，确认 `public.dashboard_updates` 在 `supabase_realtime` publication 中；再执行 `supabase/migrations/20260930163914_incomplete_timeline_partial_processing.sql`。先完成数据库迁移，再部署新版 Cloud Run 抓取容器与 Next.js 应用。在 Vercel Production 设置 `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` 并重新部署。
 7. 执行 `supabase/schedule.sql`。它创建 `tibo-monitor-90m-hour` 与 `tibo-monitor-90m-half-hour` 两个任务，并原子移除旧的两小时／五分钟任务。**只修改仓库文件不会自动改动线上任务，必须在实际项目 SQL Editor 执行。**
 8. 查看至少两个相隔约 90 分钟的实际检查：`cron.job_run_details` 只证明调度执行，还需核对 `net._http_response` 的 HTTP 结果，以及 `monitor_state.last_success_at`。HTTP 202 表示部分工作延期，200 的 `busy` 表示已有任务在运行，都不等同于一次完整成功。开两个浏览器标签页，在下一条新推文完成分析入库后确认两页自动更新；无新推文时页面不请求 `/api/dashboard`。
 
@@ -129,7 +129,7 @@ Realtime 通知和切回页面只读取数据库，绝不会再次触发 Cloud R
 仅 `upcoming` 且原文明示完整时间时显示本地倒计时；归零后显示等待完成确认，不会自动变成已重置。检查周期显示 90 分钟；页面不再定时轮询数据库，倒计时也不访问后端。
 
 - `published_at > latest_tweet_time` 是唯一的新旧判断规则，比较真实时间值而非字符串，旧 → 新处理。
-- 每条分析成功后持久化；一组相同发布时间的推文全部保存后，才推进游标。中途失败立即停止，较新的内容不会越过失败点。
+- 每条分析成功后持久化；完整覆盖时，一组相同发布时间的推文全部保存后才推进游标。历史覆盖不足时，已见新推文仍按旧到新保存，但不推进游标，网页显示未核实时间段；中途分析失败仍立即停止。
 - `tweet_url` 唯一约束与分析前查重共同保护重试；即使保存成功后进度更新失败，也不会重新分析已保存记录。
 - `monitor_state` 额外包含租约 token 和到期时间。数据库 RPC 原子获取租约、校验写入归属，过期进程无法继续写入。
 - 没有新推文也更新检查成功时间，不调用 DeepSeek。服务故障仅保存固定错误码，浏览器不显示内部错误信息。

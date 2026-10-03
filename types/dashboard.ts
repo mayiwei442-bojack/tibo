@@ -7,6 +7,8 @@ export interface DashboardData {
     latest_tweet_time: string | null;
     last_check_at: string | null;
     last_success_at: string | null;
+    coverage_gap_oldest_seen: string | null;
+    update_version: number;
     health: MonitorHealth;
   };
   latestSignal: StoredTweet | null;

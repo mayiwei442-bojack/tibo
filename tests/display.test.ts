@@ -2,11 +2,11 @@ import { describe, expect, it } from 'vitest';
 import { countdownParts, hasNewTweetVersion } from '@/lib/monitor/display';
 
 describe('Realtime dashboard version', () => {
-  it('refreshes only for a newer tweet, not an equivalent timestamp spelling', () => {
-    expect(hasNewTweetVersion('2026-09-30T09:00:00Z', '2026-09-30T17:00:00+08:00')).toBe(false);
-    expect(hasNewTweetVersion('2026-09-30T09:01:00Z', '2026-09-30T09:00:00.000+00:00')).toBe(true);
-    expect(hasNewTweetVersion(null, null)).toBe(false);
-    expect(hasNewTweetVersion('invalid', null)).toBe(false);
+  it('refreshes on a newer saved-row or gap version, even with an unchanged cursor', () => {
+    expect(hasNewTweetVersion(5, 5)).toBe(false);
+    expect(hasNewTweetVersion(6, 5)).toBe(true);
+    expect(hasNewTweetVersion(null, 0)).toBe(false);
+    expect(hasNewTweetVersion('6', 5)).toBe(false);
   });
 });
 

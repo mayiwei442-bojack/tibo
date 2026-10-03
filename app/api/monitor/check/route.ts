@@ -27,7 +27,7 @@ export async function POST(request: Request) {
     }
     const status = result.status === 'rate_limited' ? 429
       : result.status === 'busy' ? 409
-        : result.status === 'deferred' ? 202 : 200;
+        : result.status === 'deferred' || result.status === 'partial' ? 202 : 200;
     return Response.json(result, { status, headers });
   } catch (error) {
     console.error(`[Manual Monitor Error] ${safeErrorCode(error)}`);

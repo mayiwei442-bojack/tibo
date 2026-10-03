@@ -10,6 +10,35 @@ from .parser import ScrapeError, finalize_posts, parse_posts, parse_detail, pars
 import re
 
 diagnostic_stage = 'start'
+diagnostic_progress = {'posts': 0, 'scrolls': 0, 'scroll_y': 0,
+                       'scroll_height': 0, 'articles': 0, 'fallback_failed': 0}
+
+
+def advance_timeline(page) -> None:
+    """Advance the rendered timeline, including pages with a nested scroller."""
+    before = page.evaluate("window.scrollY")
+    page.evaluate("window.scrollBy(0, window.innerHeight * 0.8)")
+    page.wait_for_timeout(1200)
+    after = page.evaluate("window.scrollY")
+    if after <= before:
+        # Reveal the last article through its scrollable ancestor if moving the
+        # window did not work. Failure of this optional fallback must not turn
+        # a coverage failure into an unrelated browser exception.
+        try:
+            page.locator('article').last.scroll_into_view_if_needed(timeout=5000)
+            page.mouse.wheel(0, max(600, page.viewport_size['height']))
+            page.wait_for_timeout(1200)
+        except Exception:
+            diagnostic_progress['fallback_failed'] = 1
+    metrics = page.evaluate("""() => ({
+        y: Math.round(window.scrollY),
+        height: Math.round(document.documentElement.scrollHeight),
+        articles: document.querySelectorAll('article').length
+    })""")
+    diagnostic_progress['scrolls'] += 1
+    diagnostic_progress['scroll_y'] = max(diagnostic_progress['scroll_y'], metrics['y'])
+    diagnostic_progress['scroll_height'] = max(diagnostic_progress['scroll_height'], metrics['height'])
+    diagnostic_progress['articles'] = metrics['articles']
 
 
 def scrape(since: str | None) -> dict:
@@ -52,6 +81,7 @@ def scrape(since: str | None) -> dict:
                 if previous and (previous["text"] != post["text"] or previous["publishedAt"] != post["publishedAt"]):
                     raise ScrapeError("CONFLICTING_POST")
                 found[post["url"]] = post
+            diagnostic_progress['posts'] = len(found)
             ordinary = [p for p in found.values() if not p["pinned"]]
             if since and ordinary and min(parse_time(p["publishedAt"]) for p in ordinary) <= parse_time(since):
                 break
@@ -60,8 +90,7 @@ def scrape(since: str | None) -> dict:
             if len(found) >= 180:
                 break
             diagnostic_stage = 'timeline_scroll'
-            page.evaluate("window.scrollBy(0, window.innerHeight * 0.8)")
-            page.wait_for_timeout(1200)
+            advance_timeline(page)
 
     def collect(page):
         # Scrapling logs page_action exceptions instead of propagating them.
@@ -79,7 +108,13 @@ def scrape(since: str | None) -> dict:
     if response.status != 200:
         raise ScrapeError("TIMELINE_UNAVAILABLE")
     diagnostic_stage = 'timeline_finalize'
-    return {"sourceUrl": target, "tweets": finalize_posts(list(found.values()), since)}
+    posts = list(found.values())
+    tweets = finalize_posts(posts, since, allow_incomplete=True)
+    ordinary = [parse_time(post['publishedAt']) for post in posts if not post['pinned']]
+    oldest = min(ordinary)
+    return {"sourceUrl": target, "tweets": tweets,
+            "coverageComplete": not since or oldest <= parse_time(since),
+            "oldestOrdinaryPublishedAt": oldest.isoformat().replace('+00:00', 'Z')}
 
 
 if __name__ == "__main__":
@@ -91,5 +126,6 @@ if __name__ == "__main__":
     except Exception as error:
         code = str(error) if isinstance(error, ScrapeError) else "TIMELINE_UNAVAILABLE"
         error_type = type(error).__name__ if type(error).__name__ in {'ScrapeError', 'TimeoutError', 'Error', 'OSError', 'ValueError'} else 'UNEXPECTED'
-        print(json.dumps({"error": code, "type": error_type, "stage": diagnostic_stage}))
+        print(json.dumps({"error": code, "type": error_type,
+                          "stage": diagnostic_stage, "progress": diagnostic_progress}))
         sys.exit(1)

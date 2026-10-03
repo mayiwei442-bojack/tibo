@@ -40,6 +40,9 @@ class ParserTests(unittest.TestCase):
         source = html(number=1, timestamp=(now - timedelta(days=100)).isoformat(), pinned=True) + html(number=2, timestamp=now.isoformat())
         with self.assertRaisesRegex(ScrapeError, "COVERAGE_INCOMPLETE"):
             finalize_posts(parse_posts(source, "test"), (now - timedelta(days=1)).isoformat())
+        self.assertEqual(len(finalize_posts(parse_posts(source, "test"),
+                                            (now - timedelta(days=1)).isoformat(),
+                                            allow_incomplete=True)), 2)
 
     def test_non_chronological_timeline_fails(self):
         now = datetime.now(timezone.utc)

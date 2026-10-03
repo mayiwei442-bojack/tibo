@@ -1,5 +1,5 @@
 import type { Analysis } from '@/types/analysis';
-import type { Tweet } from '@/types/tweet';
+import type { ScrapedTimeline, Tweet } from '@/types/tweet';
 import { MonitorError, safeErrorCode } from '@/lib/errors';
 
 export interface MonitorAcquisition {
@@ -13,11 +13,12 @@ export interface MonitorRepository {
   exists(tweet: Tweet): Promise<boolean>;
   save(tweet: Tweet, analysis: Analysis): Promise<void>;
   advance(time: string, urls: string[]): Promise<void>;
+  markCoverageGap(oldest: string): Promise<void>;
   finish(error: string | null): Promise<void>;
 }
 export interface MonitorDependencies {
   repository: MonitorRepository;
-  getLatestTweets: (since: string | null) => Promise<Tweet[]>;
+  getLatestTweets: (since: string | null) => Promise<ScrapedTimeline>;
   analyseTweet: (tweet: Tweet) => Promise<Analysis>;
   now?: () => number;
 }
@@ -38,12 +39,21 @@ export async function checkForNewTweets({
   if (!state.acquired) return { status: 'busy', processed: 0 } as const;
   let processed = 0;
   try {
-    const tweets = await getLatestTweets(state.latest_tweet_time);
+    const timeline = await getLatestTweets(state.latest_tweet_time);
+    const { tweets, coverageComplete, oldestOrdinaryPublishedAt } = timeline;
     const watermark = state.latest_tweet_time
       ? Date.parse(state.latest_tweet_time)
       : -Infinity;
     if (Number.isNaN(watermark))
       throw new MonitorError('DATABASE_INVALID_STATE');
+    if (!coverageComplete) {
+      if (!state.latest_tweet_time ||
+          !Number.isFinite(Date.parse(oldestOrdinaryPublishedAt)) ||
+          Date.parse(oldestOrdinaryPublishedAt) <= watermark)
+        throw new MonitorError('SCRAPER_INVALID_DATA');
+      await repository.markCoverageGap(oldestOrdinaryPublishedAt);
+      console.warn('[Monitor] Timeline coverage incomplete; cursor held');
+    }
     const unique = new Map<string, Tweet>();
     for (const tweet of tweets) {
       if (!Number.isFinite(Date.parse(tweet.publishedAt)))
@@ -86,15 +96,19 @@ export async function checkForNewTweets({
         console.info('[Database] Tweet saved');
       }
       // Complete all siblings at the same timestamp before advancing the watermark.
-      await repository.advance(
-        new Date(timestamp).toISOString(),
-        group.map((tweet) => tweet.url),
-      );
-      console.info('[Monitor] State updated');
+      if (coverageComplete) {
+        await repository.advance(
+          new Date(timestamp).toISOString(),
+          group.map((tweet) => tweet.url),
+        );
+        console.info('[Monitor] State updated');
+      }
     }
-    await repository.finish(null);
-    console.info('[Monitor] Complete');
-    return { status: 'complete', processed } as const;
+    await repository.finish(coverageComplete ? null : 'TIMELINE_COVERAGE_INCOMPLETE');
+    console.info(coverageComplete ? '[Monitor] Complete' : '[Monitor] Partial');
+    return coverageComplete
+      ? { status: 'complete', processed } as const
+      : { status: 'partial', processed } as const;
   } catch (error) {
     const code = safeErrorCode(error);
     console.error(`[Monitor Error] ${code}`);

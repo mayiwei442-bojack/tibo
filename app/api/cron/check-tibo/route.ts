@@ -25,7 +25,7 @@ export async function GET(request: Request) {
       analyseTweet,
     });
     return Response.json(result, {
-      status: result.status === 'deferred' ? 202 : 200,
+      status: result.status === 'deferred' || result.status === 'partial' ? 202 : 200,
       headers,
     });
   } catch (error) {

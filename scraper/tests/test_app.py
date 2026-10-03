@@ -44,3 +44,13 @@ class AppTests(unittest.TestCase):
             self.assertNotIn('detail_wait', response.text)
             self.assertEqual(warning.call_args.args[1:4], ('detail_wait', 'TIMELINE_UNAVAILABLE', 'TimeoutError'))
             self.assertNotIn('a' * 32, str(warning.call_args))
+
+    def test_progress_diagnostics_are_numeric_and_not_exposed_to_client(self):
+        process = MagicMock()
+        process.communicate.return_value = ('{"error":"TIMELINE_COVERAGE_INCOMPLETE","type":"ScrapeError","stage":"timeline_finalize","progress":{"posts":5,"scrolls":12,"scroll_y":960,"scroll_height":1800,"articles":5,"fallback_failed":0}}', '')
+        process.returncode = 1
+        with patch.dict(os.environ, {"SCRAPER_SECRET": "a" * 32}), patch("scraper.app.subprocess.Popen", return_value=process), patch("scraper.app.os.killpg", create=True), patch("scraper.app.logger.warning") as warning:
+            response = client.post("/tweets", json={}, headers={"Authorization": "Bearer " + "a" * 32})
+            self.assertEqual(response.status_code, 503)
+            self.assertNotIn('posts', response.text)
+            self.assertEqual(warning.call_args.args[-6:], (5, 12, 960, 1800, 5, 0))

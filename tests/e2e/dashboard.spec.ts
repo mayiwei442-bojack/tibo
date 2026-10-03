@@ -80,6 +80,8 @@ test('saved signals, filters, safe links and refresh failure', async ({
               latest_tweet_time: timestamp,
               last_check_at: timestamp,
               last_success_at: timestamp,
+              coverage_gap_oldest_seen: null,
+              update_version: 1,
               health: 'healthy',
             },
             tweets: [signal, irrelevant],

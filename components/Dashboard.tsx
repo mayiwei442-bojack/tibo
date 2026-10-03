@@ -116,7 +116,7 @@ export function Dashboard({ initialData }: { initialData: DashboardData }) {
   const [realtimeConnected, setRealtimeConnected] = useState(false);
   const request = useRef<AbortController | null>(null);
   const manualRequest = useRef<AbortController | null>(null);
-  const latestWatermark = useRef(initialData.state.latest_tweet_time);
+  const latestVersion = useRef(initialData.state.update_version);
   const refresh = useCallback(async (replace = false) => {
     if (request.current && !replace) return;
     request.current?.abort();
@@ -132,7 +132,7 @@ export function Dashboard({ initialData }: { initialData: DashboardData }) {
       if (!response.ok) throw new Error('Unavailable');
       const nextData = (await response.json()) as DashboardData;
       if (request.current !== controller) return;
-      latestWatermark.current = nextData.state.latest_tweet_time;
+      latestVersion.current = nextData.state.update_version;
       setData(nextData);
       setRefreshError(false);
     } catch {
@@ -168,6 +168,8 @@ export function Dashboard({ initialData }: { initialData: DashboardData }) {
         setCheckNotice('已有检查正在进行，本次未重复启动。请稍后查看结果。');
       } else if (response.ok && result.status === 'deferred') {
         setCheckNotice(`已处理 ${result.processed} 条新推文，剩余内容将在后续检查继续处理。`);
+      } else if (response.ok && result.status === 'partial') {
+        setCheckNotice(`已处理 ${result.processed} 条当前可见的新推文；更早的时间段尚未核实，系统不会跳过它。`);
       } else if (response.ok && result.status === 'complete') {
         setCheckNotice(result.processed > 0
           ? `检查完成，已处理 ${result.processed} 条新推文。`
@@ -203,21 +205,23 @@ export function Dashboard({ initialData }: { initialData: DashboardData }) {
     });
     let active = true;
     const onUpdate = (value: unknown) => {
-      if (!hasNewTweetVersion(value, latestWatermark.current)) return;
-      if (document.visibilityState === 'visible') void refresh();
+      if (!hasNewTweetVersion(value, latestVersion.current)) return;
+      // A second insert may arrive while the first read is in flight. The
+      // newest event replaces that read so the last committed row is not lost.
+      if (document.visibilityState === 'visible') void refresh(true);
     };
     const channel = db.channel('dashboard-update-signal')
       .on('postgres_changes', {
         event: 'UPDATE', schema: 'public', table: 'dashboard_updates', filter: 'id=eq.1',
-      }, (payload) => onUpdate(payload.new.latest_tweet_time))
+      }, (payload) => onUpdate(payload.new.version))
       .subscribe((status) => {
         if (!active) return;
         setRealtimeConnected(status === 'SUBSCRIBED');
         if (status !== 'SUBSCRIBED') return;
         // Reconcile the short gap between the server render and subscription.
-        void db.from('dashboard_updates').select('latest_tweet_time').eq('id', 1).single()
+        void db.from('dashboard_updates').select('version').eq('id', 1).single()
           .then(({ data }) => {
-            if (active) onUpdate(data?.latest_tweet_time);
+            if (active) onUpdate(data?.version);
           });
       });
     return () => {
@@ -427,6 +431,13 @@ export function Dashboard({ initialData }: { initialData: DashboardData }) {
           {refreshError && (
             <p className="notice" role="status">
               暂时无法获取最新数据，当前显示上次加载的内容，请稍后重新打开页面。
+            </p>
+          )}
+          {data.state.coverage_gap_oldest_seen && data.state.latest_tweet_time && (
+            <p className="notice" role="status">
+              历史覆盖未核实：从 {timestamp(data.state.latest_tweet_time)} UTC 到{' '}
+              {timestamp(data.state.coverage_gap_oldest_seen)} UTC 之间，X 未提供完整时间线。
+              当前能抓到的新推文仍会保存；此区间是否有遗漏推文尚不能确认，检查游标暂不推进。
             </p>
           )}
           {(health === 'degraded' || health === 'stale') && !refreshError && (

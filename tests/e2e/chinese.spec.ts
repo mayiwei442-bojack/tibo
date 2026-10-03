@@ -17,7 +17,8 @@ test('Chinese interface keeps English posts and toggles translation without requ
   const errors: string[] = [];
   page.on('pageerror', error => errors.push(error.message));
   await page.route('**/api/dashboard', route => route.fulfill({ json: {
-    state: { last_check_at: stamp, last_success_at: stamp, latest_tweet_time: stamp, health: 'healthy' },
+    state: { last_check_at: stamp, last_success_at: stamp, latest_tweet_time: stamp,
+      coverage_gap_oldest_seen: null, update_version: 1, health: 'healthy' },
     tweets: [tweet, { ...tweet, id: 'untranslated', tweet_url: 'https://x.com/test/status/124', tweet_translation: null }],
     latestSignal: tweet, latestResetSignal: tweet, totalProcessed: 2, relatedCount: 2,
     sourceUrl: 'https://x.com/test',

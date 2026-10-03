@@ -24,7 +24,8 @@ const a = post(1, '2026-09-20T10:00:00Z'),
   c = post(3, '2026-09-20T12:00:00Z');
 function setup(watermark: string | null = null) {
   const saved = new Set<string>();
-  const state = { watermark, error: null as string | null, locked: false };
+  const state = { watermark, error: null as string | null, locked: false,
+    gap: null as string | null };
   const repository: MonitorRepository = {
     acquire: vi.fn(async () => {
       if (state.locked)
@@ -39,13 +40,18 @@ function setup(watermark: string | null = null) {
     advance: vi.fn(async (time) => {
       state.watermark = time;
     }),
+    markCoverageGap: vi.fn(async (oldest) => {
+      state.gap = oldest;
+    }),
     finish: vi.fn(async (error) => {
       state.error = error;
+      if (error === null) state.gap = null;
       state.locked = false;
     }),
   };
   const analyseTweet = vi.fn(async () => analysis);
-  const getLatestTweets = vi.fn(async () => [c, a, b]);
+  const getLatestTweets = vi.fn(async () => ({ tweets: [c, a, b],
+    coverageComplete: true, oldestOrdinaryPublishedAt: a.publishedAt }));
   return {
     state,
     saved,
@@ -93,7 +99,8 @@ describe('timestamp monitor', () => {
   it('does not skip same-time siblings after a failure', async () => {
     const deps = setup();
     const sibling = post(4, a.publishedAt);
-    deps.getLatestTweets.mockResolvedValue([sibling, a, b]);
+    deps.getLatestTweets.mockResolvedValue({ tweets: [sibling, a, b], coverageComplete: true,
+      oldestOrdinaryPublishedAt: a.publishedAt });
     deps.analyseTweet
       .mockResolvedValueOnce(analysis)
       .mockRejectedValueOnce(new MonitorError('ANALYSIS_UNAVAILABLE'));
@@ -133,16 +140,17 @@ describe('timestamp monitor', () => {
   });
   it('deduplicates URL observations before AI', async () => {
     const deps = setup();
-    deps.getLatestTweets.mockResolvedValue([a, a, b]);
+    deps.getLatestTweets.mockResolvedValue({ tweets: [a, a, b], coverageComplete: true,
+      oldestOrdinaryPublishedAt: a.publishedAt });
     await checkForNewTweets(deps);
     expect(deps.analyseTweet).toHaveBeenCalledTimes(2);
   });
   it('rejects conflicting duplicate URLs before processing', async () => {
     const deps = setup();
-    deps.getLatestTweets.mockResolvedValue([
+    deps.getLatestTweets.mockResolvedValue({ tweets: [
       a,
       { ...a, publishedAt: b.publishedAt },
-    ]);
+    ], coverageComplete: true, oldestOrdinaryPublishedAt: a.publishedAt });
     await expect(checkForNewTweets(deps)).rejects.toThrow(
       'SCRAPER_CONFLICTING_DATA',
     );
@@ -160,5 +168,24 @@ describe('timestamp monitor', () => {
     expect((await checkForNewTweets({ ...deps, now })).status).toBe('deferred');
     expect(deps.analyseTweet).not.toHaveBeenCalled();
     expect(deps.state.watermark).toBeNull();
+  });
+  it('saves visible posts during incomplete coverage without advancing the cursor or repeating AI', async () => {
+    const deps = setup('2026-09-19T07:39:00Z');
+    deps.getLatestTweets.mockResolvedValue({ tweets: [c, a, b],
+      coverageComplete: false, oldestOrdinaryPublishedAt: a.publishedAt });
+    expect(await checkForNewTweets(deps)).toEqual({ status: 'partial', processed: 3 });
+    expect(deps.state.watermark).toBe('2026-09-19T07:39:00Z');
+    expect(deps.state.gap).toBe(a.publishedAt);
+    expect(deps.state.error).toBe('TIMELINE_COVERAGE_INCOMPLETE');
+    expect(deps.repository.advance).not.toHaveBeenCalled();
+    expect(deps.analyseTweet).toHaveBeenCalledTimes(3);
+    expect(await checkForNewTweets(deps)).toEqual({ status: 'partial', processed: 0 });
+    expect(deps.analyseTweet).toHaveBeenCalledTimes(3);
+    deps.getLatestTweets.mockResolvedValue({ tweets: [c, a, b],
+      coverageComplete: true, oldestOrdinaryPublishedAt: a.publishedAt });
+    await checkForNewTweets(deps);
+    expect(deps.state.gap).toBeNull();
+    expect(deps.state.watermark).toBe(c.publishedAt.replace('Z', '.000Z'));
+    expect(deps.analyseTweet).toHaveBeenCalledTimes(3);
   });
 });

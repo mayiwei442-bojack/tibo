@@ -3,7 +3,7 @@ import { POST } from '@/app/api/monitor/check/route';
 import { MonitorError } from '@/lib/errors';
 
 const mocks = vi.hoisted(() => ({
-  acquire: vi.fn(), exists: vi.fn(), save: vi.fn(), advance: vi.fn(), finish: vi.fn(),
+  acquire: vi.fn(), exists: vi.fn(), save: vi.fn(), advance: vi.fn(), markCoverageGap: vi.fn(), finish: vi.fn(),
   scrape: vi.fn(), analyse: vi.fn(),
 }));
 vi.mock('@/lib/monitor/repository', () => ({
@@ -22,7 +22,8 @@ beforeEach(() => {
   vi.resetAllMocks();
   mocks.acquire.mockResolvedValue({ acquired: true, latest_tweet_time: null });
   mocks.exists.mockResolvedValue(false);
-  mocks.scrape.mockResolvedValue([]);
+  mocks.scrape.mockResolvedValue({ tweets: [], coverageComplete: true,
+    oldestOrdinaryPublishedAt: '2026-09-30T01:00:00Z' });
   mocks.analyse.mockResolvedValue({ related_to_codex: false, category: 'irrelevant', summary: '测试摘要', reset_time: null, important: false });
 });
 it('rejects cross-site or originless requests before accessing paid services', async () => {
@@ -43,7 +44,8 @@ it('does not scrape or analyse when another visitor is running or the cooldown i
 });
 it('runs scrape, analysis, save and finish for new posts', async () => {
   const tweet = { text: 'Test post', publishedAt: '2026-09-30T01:00:00Z', url: 'https://x.com/test/status/123' };
-  mocks.scrape.mockResolvedValue([tweet]);
+  mocks.scrape.mockResolvedValue({ tweets: [tweet], coverageComplete: true,
+    oldestOrdinaryPublishedAt: tweet.publishedAt });
   const response = await POST(request());
   expect(await response.json()).toEqual({ status: 'complete', processed: 1 });
   expect(mocks.scrape).toHaveBeenCalledWith(null);
@@ -51,6 +53,18 @@ it('runs scrape, analysis, save and finish for new posts', async () => {
   expect(mocks.save).toHaveBeenCalledOnce();
   expect(mocks.advance).toHaveBeenCalledOnce();
   expect(mocks.finish).toHaveBeenCalledWith(null);
+});
+it('accepts a partial result while keeping the old cursor', async () => {
+  const tweet = { text: 'Test post', publishedAt: '2026-09-30T01:00:00Z', url: 'https://x.com/test/status/123' };
+  mocks.acquire.mockResolvedValueOnce({ acquired: true, latest_tweet_time: '2026-09-29T01:00:00Z' });
+  mocks.scrape.mockResolvedValue({ tweets: [tweet], coverageComplete: false,
+    oldestOrdinaryPublishedAt: tweet.publishedAt });
+  const response = await POST(request());
+  expect(response.status).toBe(202);
+  expect(await response.json()).toEqual({ status: 'partial', processed: 1 });
+  expect(mocks.markCoverageGap).toHaveBeenCalledWith(tweet.publishedAt);
+  expect(mocks.advance).not.toHaveBeenCalled();
+  expect(mocks.finish).toHaveBeenCalledWith('TIMELINE_COVERAGE_INCOMPLETE');
 });
 it('completes without AI for no new posts and reports failures without exposing internals', async () => {
   expect(await (await POST(request())).json()).toEqual({ status: 'complete', processed: 0 });

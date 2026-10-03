@@ -13,7 +13,8 @@ for (const mode of ['completed', 'upcoming', 'possible', 'unknown'] as const) {
     };
     const data = {
       state: { latest_tweet_time: signal.published_at, last_check_at: signal.published_at,
-        last_success_at: signal.published_at, health: 'healthy' },
+        last_success_at: signal.published_at, coverage_gap_oldest_seen: null,
+        update_version: 1, health: 'healthy' },
       latestSignal: signal, latestResetSignal: signal, tweets: [signal],
       totalProcessed: 1, relatedCount: 1, sourceUrl: 'https://x.com/test',
     };

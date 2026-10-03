@@ -7,6 +7,12 @@ export interface Tweet {
   tweetId?: string;
 }
 
+export interface ScrapedTimeline {
+  tweets: Tweet[];
+  coverageComplete: boolean;
+  oldestOrdinaryPublishedAt: string;
+}
+
 export interface StoredTweet extends Analysis {
   id: string;
   tweet_url: string;

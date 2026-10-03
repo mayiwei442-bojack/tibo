@@ -37,13 +37,14 @@ beforeAll(async () => {
   await db.exec(readFileSync('supabase/migrations/20260927094104_chinese_content.sql', 'utf8'));
   await db.exec(readFileSync('supabase/migrations/20260929170036_dashboard_updates_realtime.sql', 'utf8'));
   await db.exec(readFileSync('supabase/migrations/20260929172245_manual_monitor_cooldown.sql', 'utf8'));
+  await db.exec(readFileSync('supabase/migrations/20260930163914_incomplete_timeline_partial_processing.sql', 'utf8'));
 });
 afterAll(async () => {
   await db.close();
 });
 beforeEach(async () => {
   await db.exec(
-    'reset role; truncate public.tweets; update public.monitor_state set latest_tweet_time=null,last_check_at=null,last_success_at=null,last_error=null,lease_token=null,lease_until=null; update public.dashboard_updates set latest_tweet_time=null;',
+    'reset role; truncate public.tweets; update public.monitor_state set latest_tweet_time=null,last_check_at=null,last_success_at=null,last_error=null,coverage_gap_oldest_seen=null,lease_token=null,lease_until=null; update public.dashboard_updates set latest_tweet_time=null,version=0;',
   );
 });
 
@@ -76,6 +77,7 @@ describe('actual Postgres migration and RPCs', () => {
     const sql = readFileSync('supabase/migrations/20260927094104_chinese_content.sql', 'utf8');
     await db.exec(sql);
     await db.exec(sql);
+    await db.exec(readFileSync('supabase/migrations/20260930163914_incomplete_timeline_partial_processing.sql', 'utf8'));
     const saved = (await db.query<{tweet_text: string; summary: string; tweet_translation: string}>('select tweet_text,summary,tweet_translation from tweets')).rows[0];
     expect(saved.tweet_text).toBe(original);
     expect(saved.summary).toBe('Tibo 表示所有 Reset 都已生效，并祝大家周末愉快。');
@@ -104,6 +106,7 @@ describe('actual Postgres migration and RPCs', () => {
       /permission denied/,
     );
     await expect(acquire()).rejects.toThrow(/permission denied/);
+    await expect(db.query('select public.monitor_mark_coverage_gap($1,$2::timestamptz)', [token, tweet.published_at])).rejects.toThrow(/permission denied/);
     await db.exec('reset role; set role service_role');
     expect((await acquire()).rows[0].result.acquired).toBe(true);
   });
@@ -175,6 +178,23 @@ describe('actual Postgres migration and RPCs', () => {
         )
       ).rows[0].count,
     ).toBe(1);
+    expect((await db.query<{ version: number }>('select version from dashboard_updates')).rows[0].version).toBe(1);
+  });
+  it('records a coverage gap without moving the cursor, publishes partial saves, then clears it only on success', async () => {
+    await db.exec("update monitor_state set latest_tweet_time='2026-09-20T08:00:00Z'");
+    await acquire();
+    await db.query('select public.monitor_mark_coverage_gap($1,$2::timestamptz)', [token, '2026-09-20T09:00:00Z']);
+    await save();
+    await db.query("select public.monitor_finish($1,'TIMELINE_COVERAGE_INCOMPLETE')", [token]);
+    const partial = (await db.query<{ latest_tweet_time: Date; coverage_gap_oldest_seen: Date }>(
+      'select latest_tweet_time,coverage_gap_oldest_seen from monitor_state')).rows[0];
+    expect(partial.latest_tweet_time.toISOString()).toBe('2026-09-20T08:00:00.000Z');
+    expect(partial.coverage_gap_oldest_seen.toISOString()).toBe('2026-09-20T09:00:00.000Z');
+    expect((await db.query<{ version: number }>('select version from dashboard_updates')).rows[0].version).toBe(2);
+    await acquire();
+    await db.query('select public.monitor_finish($1,null)', [token]);
+    expect((await db.query<{ coverage_gap_oldest_seen: unknown }>('select coverage_gap_oldest_seen from monitor_state')).rows[0].coverage_gap_oldest_seen).toBeNull();
+    expect((await db.query<{ version: number }>('select version from dashboard_updates')).rows[0].version).toBe(3);
   });
   it('does not claim success after a failed check', async () => {
     await acquire();

@@ -47,6 +47,9 @@ export function createMonitorRepository({ manual = false }: { manual?: boolean }
     async advance(time, urls) {
       await rpc('monitor_advance', { p_time: time, p_urls: urls });
     },
+    async markCoverageGap(oldest) {
+      await rpc('monitor_mark_coverage_gap', { p_oldest: oldest });
+    },
     async finish(error) {
       await rpc('monitor_finish', { p_error: error });
     },

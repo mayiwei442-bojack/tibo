@@ -2,12 +2,12 @@ import 'server-only';
 import { requiredEnv, sourceUrl } from '@/lib/config';
 import { MonitorError } from '@/lib/errors';
 import { validateTweets } from './validation';
-import type { Tweet } from '@/types/tweet';
+import type { ScrapedTimeline } from '@/types/tweet';
 
 // This is the only application boundary to the Python/Scrapling service.
 export async function getLatestTweets(
   latestTweetTime: string | null = null,
-): Promise<Tweet[]> {
+): Promise<ScrapedTimeline> {
   const target = sourceUrl();
   if (!target) throw new MonitorError('CONFIGURATION_REQUIRED');
   const endpoint = new URL(requiredEnv('SCRAPER_URL'));
@@ -37,12 +37,21 @@ export async function getLatestTweets(
     if (!response.ok) throw new MonitorError('SCRAPER_UNAVAILABLE');
     const body = await response.text();
     if (body.length > 2_000_000) throw new MonitorError('SCRAPER_INVALID_DATA');
-    const data = JSON.parse(body) as { tweets?: unknown; sourceUrl?: unknown };
+    const data = JSON.parse(body) as { tweets?: unknown; sourceUrl?: unknown;
+      coverageComplete?: unknown; oldestOrdinaryPublishedAt?: unknown };
     if (data.sourceUrl !== target)
       throw new MonitorError('SCRAPER_SOURCE_MISMATCH');
     const tweets = validateTweets(data.tweets, target);
+    const oldest = data.oldestOrdinaryPublishedAt;
+    if (typeof oldest !== 'string' || !Number.isFinite(Date.parse(oldest)) ||
+        typeof data.coverageComplete !== 'boolean' ||
+        (latestTweetTime === null && !data.coverageComplete) ||
+        (latestTweetTime !== null &&
+          data.coverageComplete !== (Date.parse(oldest) <= Date.parse(latestTweetTime))))
+      throw new MonitorError('SCRAPER_INVALID_DATA');
     console.info(`[Scraper] Found ${tweets.length} tweets`);
-    return tweets;
+    return { tweets, coverageComplete: data.coverageComplete,
+      oldestOrdinaryPublishedAt: oldest };
   } catch (error) {
     if (error instanceof MonitorError) throw error;
     throw new MonitorError('SCRAPER_UNAVAILABLE');

@@ -64,9 +64,15 @@ def tweets(body: ScrapeRequest, authorization: str | None = Header(default=None)
                 pass
             def safe(value):
                 return value if isinstance(value, str) and re.fullmatch(r'[A-Za-z_]{1,50}', value) else 'UNAVAILABLE'
-            logger.warning('Scrape failed stage=%s code=%s type=%s elapsed_s=%.1f exit_code=%s',
+            def safe_number(value):
+                return value if type(value) is int and 0 <= value <= 1_000_000 else -1
+            progress = diagnostic.get('progress') if isinstance(diagnostic.get('progress'), dict) else {}
+            logger.warning('Scrape failed stage=%s code=%s type=%s elapsed_s=%.1f exit_code=%s posts=%s scrolls=%s scroll_y=%s scroll_height=%s articles=%s fallback_failed=%s',
                 safe(diagnostic.get('stage')), safe(diagnostic.get('error')),
-                safe(diagnostic.get('type')), time.monotonic() - started, process.returncode)
+                safe(diagnostic.get('type')), time.monotonic() - started, process.returncode,
+                safe_number(progress.get('posts')), safe_number(progress.get('scrolls')),
+                safe_number(progress.get('scroll_y')), safe_number(progress.get('scroll_height')),
+                safe_number(progress.get('articles')), safe_number(progress.get('fallback_failed')))
             raise HTTPException(status_code=503, detail="Timeline unavailable")
         data = json.loads(stdout)
         if not data.get("tweets"):
