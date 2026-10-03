@@ -28,4 +28,5 @@ $$;
 revoke all on function public.monitor_acquire_manual(uuid) from public, anon, authenticated;
 grant execute on function public.monitor_acquire_manual(uuid) to service_role;
 
+notify pgrst, 'reload schema';
 commit;
